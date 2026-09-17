@@ -74,7 +74,10 @@ jobs:
           GOOS: windows
         run: go build -o /dev/null .
 
-      - name: Build the application bundle
+      - name: Build both bundles
+        # One for Apple silicon and one for Intel. Both are cross compiled on
+        # this runner -- the macOS SDK carries both architectures, so an Intel
+        # runner is not needed for the Intel build.
         run: |
           # A tagged build names itself after the tag, so the version inside the
           # bundle and the version on the release cannot disagree. Everything
@@ -82,24 +85,45 @@ jobs:
           if [ "$GITHUB_REF_TYPE" = tag ]; then
             export VERSION="${GITHUB_REF_NAME#v}"
           fi
-          make app
+          for arch in arm64 amd64; do
+            OUT="dist/$arch" ARCH="$arch" ./build/package.sh
+          done
 
-      - name: Check the bundle came out whole
+      - name: Check both bundles came out whole
+        # The architecture check is the one that matters. Building twice on one
+        # runner is exactly the arrangement where both downloads quietly come
+        # out for the same machine, and the one that is wrong does not start at
+        # all -- which the person who downloaded it reports, not this workflow.
         run: |
-          test -x dist/awsm.app/Contents/MacOS/awsm
-          test -f dist/awsm.app/Contents/Info.plist
-          test -f dist/awsm.app/Contents/Resources/awsm.icns
-          codesign --verify --verbose dist/awsm.app
+          set -e
+          for arch in arm64:arm64 amd64:x86_64; do
+            name="${arch%%:*}"
+            want="${arch##*:}"
+            app="dist/$name/awsm.app"
 
-      - name: Package the bundle
+            test -x "$app/Contents/MacOS/awsm"
+            test -f "$app/Contents/Info.plist"
+            test -f "$app/Contents/Resources/awsm.icns"
+            codesign --verify --verbose "$app"
+
+            got="$(lipo -archs "$app/Contents/MacOS/awsm")"
+            if [ "$got" != "$want" ]; then
+              echo "dist/$name holds $got, expected $want" >&2
+              exit 1
+            fi
+            echo "dist/$name: $got, signed"
+          done
+
+      - name: Package both bundles
         # ditto rather than zip: it is what preserves a bundle's structure and
         # the executable bit, which uploading a directory would lose.
-        #
-        # Named after the architecture it was built for, so an Intel build added
-        # later cannot quietly overwrite this one.
         run: |
-          echo "ASSET=dist/awsm-macos-$(uname -m).zip" >> "$GITHUB_ENV"
-          ditto -c -k --sequesterRsrc --keepParent dist/awsm.app "dist/awsm-macos-$(uname -m).zip"
+          set -e
+          for arch in arm64 amd64; do
+            ditto -c -k --sequesterRsrc --keepParent \
+              "dist/$arch/awsm.app" "dist/awsm-macos-$arch.zip"
+          done
+          ls -lh dist/awsm-macos-*.zip
 
       - uses: actions/upload-artifact@v4
         with:
@@ -117,11 +141,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" "$ASSET" \
+          gh release create "$GITHUB_REF_NAME" dist/awsm-macos-*.zip \
             --title "$GITHUB_REF_NAME" \
             --generate-notes \
             --notes-file - <<'NOTES'
-          The bundle is signed ad-hoc, which is enough to run and not enough for
+          Two downloads: `arm64` for Apple silicon, `amd64` for Intel. `uname -m`
+          says which this Mac is — `arm64` or `x86_64`.
+
+          Both are signed ad-hoc, which is enough to run and not enough for
           Gatekeeper to let it through on another machine. On first launch:
           right click the app and choose **Open**, or run
 

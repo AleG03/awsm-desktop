@@ -482,3 +482,35 @@ func TestClearingTheShortcutReleasesIt(t *testing.T) {
 		t.Errorf("the panel thinks %q is registered", s.current)
 	}
 }
+
+func TestBothArchitecturesAreBuiltAndChecked(t *testing.T) {
+	// A Mac is Apple silicon or Intel, and a bundle built for the other one
+	// does not start at all. Both are cross compiled on the same runner, which
+	// is exactly the arrangement where they quietly come out identical -- so
+	// the workflow has to build two and then prove they are two.
+	//
+	// Nothing here can fail in CI: it fails when someone downloads the wrong
+	// half and says it is broken.
+	script, err := os.ReadFile("build/package.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(script), `arch="${ARCH:-$(go env GOARCH)}"`) {
+		t.Error("build/package.sh no longer takes an architecture, so both builds would be the host's")
+	}
+
+	workflow, err := os.ReadFile(".github/workflows/build.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`for arch in arm64 amd64; do`,     // both are built
+		`ARCH="$arch" ./build/package.sh`, // and built as that architecture
+		`lipo -archs`,                     // and what came out is checked
+		`dist/awsm-macos-*.zip`,           // and both are released
+	} {
+		if !strings.Contains(string(workflow), want) {
+			t.Errorf("the workflow no longer contains %q", want)
+		}
+	}
+}

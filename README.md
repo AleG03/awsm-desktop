@@ -341,6 +341,15 @@ run, ninety days, and a GitHub login needed to fetch it.
 There is nothing under **Packages**, and there never will be: that is for npm,
 Docker, Maven and NuGet registries, and an application bundle is none of them.
 
+Building for one architecture by hand, if you ever need to:
+
+```sh
+OUT=dist/amd64 ARCH=amd64 ./build/package.sh
+```
+
+`ARCH` defaults to the machine you are on, so `make app` stays a local build and
+does not pay for a second architecture nobody here is going to run.
+
 **A released bundle is still signed ad-hoc.** That is enough to run it yourself
 and not enough for Gatekeeper on somebody else's machine, which will refuse it
 on first launch. Right click the app and choose **Open**, or
