@@ -312,9 +312,39 @@ endpoints through it cost nothing.
 ## Continuous integration
 
 [`.github/workflows/build.yml`](.github/workflows/build.yml) formats, vets and
-tests the code, builds the bundle and keeps it as an artifact. macOS is the only
-job: the bundle needs `codesign` and `iconutil`, and Wails links against the
-system frameworks, so there is nowhere else to build it. Windows is covered by a
-cross compile, which needs neither and still catches a platform-specific file
-that stopped compiling. Linux is not covered — it needs a runner with the GTK
-and WebKit headers, and a job nobody has run is not a check.
+tests the code, then builds the bundle. macOS is the only job: the bundle needs
+`codesign` and `iconutil`, and Wails links against the system frameworks, so
+there is nowhere else to build it. Windows is covered by a cross compile, which
+needs neither and still catches a platform-specific file that stopped compiling.
+Linux is not covered — it needs a runner with the GTK and WebKit headers, and a
+job nobody has run is not a check.
+
+### Getting the built app
+
+Every run keeps the bundle as a **workflow artifact**, which is attached to that
+run, expires after ninety days and needs a GitHub login to download. That is
+fine for checking a build and wrong for handing someone an application.
+
+So pushing a tag makes a **release** instead:
+
+```sh
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+The bundle is named after the tag — `VERSION` reaches `build/package.sh`, so
+what `CFBundleShortVersionString` says and what the release says cannot
+disagree — and the zip is attached to a permanent, public release.
+
+There is nothing under **Packages**, and there never will be: that is for npm,
+Docker, Maven and NuGet registries, and an application bundle is none of them.
+
+**A released bundle is still signed ad-hoc.** That is enough to run it yourself
+and not enough for Gatekeeper on somebody else's machine, which will refuse it
+on first launch. Right click the app and choose **Open**, or
+
+```sh
+xattr -d com.apple.quarantine /Applications/awsm.app
+```
+
+Handing it to people properly would need a Developer ID and notarisation.

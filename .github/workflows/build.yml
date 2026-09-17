@@ -1,4 +1,5 @@
-# Builds the macOS application bundle and keeps it as an artifact.
+# Builds the macOS application bundle: kept as an artifact on every run, and
+# attached to a release when a version tag is pushed.
 #
 # macOS is the only job here because macOS is the only platform this can be
 # built on: the bundle needs codesign and iconutil, and Wails links against the
@@ -12,6 +13,7 @@ name: build
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -27,6 +29,11 @@ jobs:
   macos:
     runs-on: macos-latest
     timeout-minutes: 20
+
+    # Needed only by the last step, and only on a tag. Declared here because
+    # permissions are per job rather than per step.
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v5
@@ -64,7 +71,14 @@ jobs:
         run: go build -o /dev/null .
 
       - name: Build the application bundle
-        run: make app
+        run: |
+          # A tagged build names itself after the tag, so the version inside the
+          # bundle and the version on the release cannot disagree. Everything
+          # else keeps the default from build/package.sh.
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            export VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          make app
 
       - name: Check the bundle came out whole
         run: |
@@ -76,10 +90,38 @@ jobs:
       - name: Package the bundle
         # ditto rather than zip: it is what preserves a bundle's structure and
         # the executable bit, which uploading a directory would lose.
-        run: ditto -c -k --sequesterRsrc --keepParent dist/awsm.app dist/awsm.app.zip
+        #
+        # Named after the architecture it was built for, so an Intel build added
+        # later cannot quietly overwrite this one.
+        run: |
+          echo "ASSET=dist/awsm-macos-$(uname -m).zip" >> "$GITHUB_ENV"
+          ditto -c -k --sequesterRsrc --keepParent dist/awsm.app "dist/awsm-macos-$(uname -m).zip"
 
       - uses: actions/upload-artifact@v4
         with:
           name: awsm-macos
-          path: dist/awsm.app.zip
+          path: dist/awsm-macos-*.zip
           if-no-files-found: error
+
+      - name: Publish the release
+        # Only on a version tag. Artifacts expire after ninety days and need a
+        # GitHub login to fetch; a release is permanent and public, which is
+        # what an application anybody is meant to install has to be.
+        #
+        # gh is already on the runner, so this needs no third party action.
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "$ASSET" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            --notes-file - <<'NOTES'
+          The bundle is signed ad-hoc, which is enough to run and not enough for
+          Gatekeeper to let it through on another machine. On first launch:
+          right click the app and choose **Open**, or run
+
+              xattr -d com.apple.quarantine /Applications/awsm.app
+
+          Proper distribution would need a Developer ID and notarisation.
+          NOTES
