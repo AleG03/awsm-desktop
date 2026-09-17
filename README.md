@@ -278,17 +278,22 @@ as a login item meant it simply never appeared.
 
 ## Platforms
 
-macOS is what this is built for. The same binary runs elsewhere with caveats
-that come from the platforms rather than from here:
+macOS is what this is built for, and the only platform it has been run on.
+There is code for the others and there are reasons to think it works, which is
+not the same thing — nobody has started this on a Windows machine or a Linux
+one, including the people who wrote the code for them:
 
-- **Windows** — tray and panel work. The tray shows no text at all, only an icon
-  and a tooltip, so the dot is drawn into the icon there instead of sitting
-  beside it as an emoji, and the details are in the tooltip. Both a light and a
-  dark variant are handed over and the platform picks between them.
-- **Linux** — the tray is a StatusNotifierItem over DBus. On KDE Plasma that is
-  native and it behaves. On GNOME the tray needs a shell extension the user has
-  to install, and under Wayland a window cannot place itself, so the panel
-  appears wherever the compositor decides rather than under the icon.
+- **Windows** — compiles, and is checked on every release build, but has never
+  been run. Wails is pure Go there, so the binary is real rather than a stub;
+  it would need the WebView2 runtime, which Windows 11 ships and Windows 10
+  usually has through Edge. The tray shows no text at all, only an icon and a
+  tooltip, so the dot is drawn into the icon rather than sitting beside it, and
+  the details go in the tooltip.
+- **Linux** — not even compiled here: it needs GTK and WebKit headers. The tray
+  would be a StatusNotifierItem over DBus, which is native on KDE Plasma; GNOME
+  needs a shell extension, and under Wayland a window cannot place itself, so
+  the panel would appear wherever the compositor decides rather than under the
+  icon.
 
 ## Layout
 

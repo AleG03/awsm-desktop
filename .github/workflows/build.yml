@@ -67,11 +67,16 @@ jobs:
         run: go test ./...
 
       - name: Cross compile for Windows
-        # No CGO and no Wails frameworks needed for this target, so it costs a
-        # few seconds and catches a platform specific file that stopped
+        # Wails is pure Go on Windows, so this needs neither CGO nor any SDK:
+        # a few seconds to catch a platform specific file that stopped
         # building.
+        #
+        # The architecture is named, because GOOS on its own leaves GOARCH as
+        # the host's -- which on this runner is arm64, so the check was quietly
+        # building for Windows on ARM and never for the machines anyone has.
         env:
           GOOS: windows
+          GOARCH: amd64
         run: go build -o /dev/null .
 
       - name: Build both bundles
