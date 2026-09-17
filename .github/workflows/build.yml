@@ -1,5 +1,9 @@
-# Builds the macOS application bundle: kept as an artifact on every run, and
-# attached to a release when a version tag is pushed.
+# Builds the macOS application bundle and attaches it to a release.
+#
+# Only on a version tag: a build is something that happens when a version is
+# cut, not on every push. Nothing here watches ordinary commits, so the tests
+# and the formatting check run when the tag does -- which means a tag is the
+# moment a mistake shows up. `make test` locally is what catches it earlier.
 #
 # macOS is the only job here because macOS is the only platform this can be
 # built on: the bundle needs codesign and iconutil, and Wails links against the
@@ -12,9 +16,9 @@ name: build
 
 on:
   push:
-    branches: [main]
     tags: ["v*"]
-  pull_request:
+  # For building without cutting a version, which is also how to try a change
+  # to this file without tagging something to find out.
   workflow_dispatch:
 
 permissions:

@@ -8,9 +8,9 @@ use the keys below, to switch to it, open the AWS console, open it in a Firefox
 container, or copy its account id. It replaces a Raycast extension that did the
 same job, without needing Raycast.
 
-It is a front end for [awsm](https://github.com/AleG03/awsm) and nothing more. Credentials, SSO
-sessions and console sign-in URLs are all awsm's work; this asks it and draws
-the answer.
+It is a front end for [awsm](https://github.com/AleG03/awsm) and nothing more.
+Credentials, SSO sessions and console sign-in URLs are all awsm's work; this
+asks it and draws the answer.
 
 ## Requirements
 
@@ -311,21 +311,20 @@ endpoints through it cost nothing.
 
 ## Continuous integration
 
-[`.github/workflows/build.yml`](.github/workflows/build.yml) formats, vets and
-tests the code, then builds the bundle. macOS is the only job: the bundle needs
-`codesign` and `iconutil`, and Wails links against the system frameworks, so
-there is nowhere else to build it. Windows is covered by a cross compile, which
-needs neither and still catches a platform-specific file that stopped compiling.
-Linux is not covered — it needs a runner with the GTK and WebKit headers, and a
-job nobody has run is not a check.
+[`.github/workflows/build.yml`](.github/workflows/build.yml) runs **only on a
+version tag**, and on a manual dispatch. It formats, vets and tests the code,
+then builds the bundle. Nothing watches ordinary commits, so `make test` before
+pushing is what catches a mistake before a tag does.
+
+macOS is the only job: the bundle needs `codesign` and `iconutil`, and Wails
+links against the system frameworks, so there is nowhere else to build it.
+Windows is covered by a cross compile, which needs neither and still catches a
+platform-specific file that stopped compiling. Linux is not covered — it needs a
+runner with the GTK and WebKit headers, and a job nobody has run is not a check.
 
 ### Getting the built app
 
-Every run keeps the bundle as a **workflow artifact**, which is attached to that
-run, expires after ninety days and needs a GitHub login to download. That is
-fine for checking a build and wrong for handing someone an application.
-
-So pushing a tag makes a **release** instead:
+Pushing a version tag builds the bundle and makes a **release** of it:
 
 ```sh
 git tag v0.2.0
@@ -334,7 +333,10 @@ git push origin v0.2.0
 
 The bundle is named after the tag — `VERSION` reaches `build/package.sh`, so
 what `CFBundleShortVersionString` says and what the release says cannot
-disagree — and the zip is attached to a permanent, public release.
+disagree — and the zip is attached to a permanent, public release. Every run
+also keeps it as a **workflow artifact**, which is what a manual dispatch from
+the Actions tab leaves behind when there is no tag to release: attached to the
+run, ninety days, and a GitHub login needed to fetch it.
 
 There is nothing under **Packages**, and there never will be: that is for npm,
 Docker, Maven and NuGet registries, and an application bundle is none of them.
