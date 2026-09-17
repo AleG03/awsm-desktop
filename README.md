@@ -16,8 +16,10 @@ asks it and draws the answer.
 
 - `awsm` on the machine. `/usr/local/bin` and `/opt/homebrew/bin` are checked
   first, then `PATH`. Set `AWSM_BIN` to point somewhere else.
-- The **AWS CLI**, which awsm uses for SSO sign-ins. It does not have to be on
-  your shell's `PATH` for this to find it — see below.
+- The **AWS CLI** is *not* required. awsm signs in to SSO itself, over the OIDC
+  device flow, and starts no `aws` at all. An awsm from before that change does
+  shell out to it, and this application makes sure it can be found either way —
+  see below. `awsm doctor` says which one you have.
 - Go 1.25 and the Xcode Command Line Tools to build. **Xcode itself is not
   needed.**
 
@@ -241,14 +243,21 @@ A GUI application launched from the Finder or at login gets launchd's `PATH` —
 Finding awsm itself is handled by looking in the usual places by absolute path.
 
 That was enough right up until awsm needed to run something of its own: `awsm
-sso login` shells out to the AWS CLI, which installs to `/usr/local/bin` and is
-not on that `PATH`. Renewing an SSO session then failed, reporting that `aws`
-could not be found — from an application that had launched perfectly well.
+sso login` used to shell out to the AWS CLI, which installs to `/usr/local/bin`
+and is not on that `PATH`. Renewing an SSO session then failed, reporting that
+`aws` could not be found — from an application that had launched perfectly well.
 
 So the `PATH` handed to awsm gets `/usr/local/bin`, `/opt/homebrew/bin`,
 `/opt/local/bin` and awsm's own directory appended, and only where those
 directories exist. Appended rather than prepended: a `PATH` that already names a
 tool is one somebody arranged deliberately.
+
+That particular failure has since been fixed at the source: awsm performs the
+SSO sign-in in process now and starts nothing. The extended `PATH` stays anyway,
+for two reasons. An older awsm on the machine still needs it, which is most of
+them on the day a release goes out. And awsm reaches for other things besides —
+browsers, `notify-send`, `session-manager-plugin` — that live in the same
+places. It costs nothing on a machine that does not need it.
 
 ## What it will not do
 

@@ -240,10 +240,13 @@ func uniqueDuration() string {
 
 func TestCancellingKillsWhatTheCommandStarted(t *testing.T) {
 	// The failure this guards against was found by cancelling a switch in the
-	// panel and watching nothing happen. awsm does not do the waiting itself:
-	// `awsm profile set` on a lapsed session runs `aws sso login`, a grandchild
-	// of this process. Killing only the direct child, which is what Go does by
-	// default, leaves that grandchild alive holding the pipe being read here.
+	// panel and watching nothing happen. A process awsm starts is a grandchild
+	// of this one, and killing only the direct child -- which is what Go does
+	// by default -- leaves it alive holding the pipe being read here.
+	//
+	// It was `aws sso login` that exposed it, before awsm signed in by itself.
+	// The shape outlives the example: any grandchild that outlives its parent
+	// wedges the panel the same way.
 	//
 	// Measured both ways on the script below:
 	//
@@ -324,8 +327,13 @@ func TestAwsmIsGivenAPathThatCanFindItsOwnTools(t *testing.T) {
 	// The bug this fixes, as reported: renewing an SSO session failed saying
 	// aws could not be found. Launched from the Finder or at login this
 	// application gets launchd's PATH -- /usr/bin:/bin:/usr/sbin:/sbin -- and
-	// passes it to awsm, which runs `aws sso login` and cannot find the AWS
-	// CLI, because that installs to /usr/local/bin.
+	// passes it straight on to awsm.
+	//
+	// awsm no longer needs the AWS CLI to sign in, so that exact failure is
+	// gone. What it still needs is everything else living in /usr/local/bin and
+	// /opt/homebrew/bin -- session-manager-plugin, browsers, notify-send -- and
+	// an older awsm on the machine needs `aws` as well. The PATH this asserts
+	// on is what makes any of them reachable.
 	t.Setenv("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
 
 	c := fakeAwsm(t, `echo "$PATH"`)
@@ -336,7 +344,7 @@ func TestAwsmIsGivenAPathThatCanFindItsOwnTools(t *testing.T) {
 	path := strings.TrimSpace(string(out))
 
 	if !strings.Contains(path, "/usr/local/bin") {
-		t.Errorf("awsm would run with PATH=%s, which cannot find the AWS CLI", path)
+		t.Errorf("awsm would run with PATH=%s, which cannot reach the tools installed there", path)
 	}
 	// And what was already there has to survive: awsm runs /usr/bin things too.
 	for _, want := range []string{"/usr/bin", "/bin"} {
