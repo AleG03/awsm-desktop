@@ -1,0 +1,85 @@
+# Builds the macOS application bundle and keeps it as an artifact.
+#
+# macOS is the only job here because macOS is the only platform this can be
+# built on: the bundle needs codesign and iconutil, and Wails links against the
+# system frameworks. Windows is covered by a cross compile, which is cheap and
+# real -- it catches a change to the platform specific files that does not
+# compile. Linux is not: it needs a runner with the GTK and WebKit headers, and
+# a job nobody has run is not a check.
+
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A new push makes the previous run pointless.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v5
+        with:
+          # The version in go.mod, so the runner and the working copy cannot
+          # drift apart.
+          go-version-file: go.mod
+          cache: true
+
+      - name: Check formatting
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt'd:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        # The tests that exercise the real awsm skip themselves when it is not
+        # installed, which on a runner is always. Everything else runs.
+        run: go test ./...
+
+      - name: Cross compile for Windows
+        # No CGO and no Wails frameworks needed for this target, so it costs a
+        # few seconds and catches a platform specific file that stopped
+        # building.
+        env:
+          GOOS: windows
+        run: go build -o /dev/null .
+
+      - name: Build the application bundle
+        run: make app
+
+      - name: Check the bundle came out whole
+        run: |
+          test -x dist/awsm.app/Contents/MacOS/awsm
+          test -f dist/awsm.app/Contents/Info.plist
+          test -f dist/awsm.app/Contents/Resources/awsm.icns
+          codesign --verify --verbose dist/awsm.app
+
+      - name: Package the bundle
+        # ditto rather than zip: it is what preserves a bundle's structure and
+        # the executable bit, which uploading a directory would lose.
+        run: ditto -c -k --sequesterRsrc --keepParent dist/awsm.app dist/awsm.app.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: awsm-macos
+          path: dist/awsm.app.zip
+          if-no-files-found: error

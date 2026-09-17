@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>awsm</title>
+    <link rel="stylesheet" href="panel.css" />
+  </head>
+  <body>
+    <!-- Two views in one window: everything about AWS in the first, everything
+         that is a preference in the second, so neither carries the other's
+         clutter. -->
+    <section id="main" class="view">
+      <header>
+        <button class="current" id="current" type="button">
+          <span class="dot" id="dot"></span>
+          <span class="current-text">
+            <span class="current-name" id="currentName">No profile</span>
+            <span class="current-meta" id="currentMeta">Nothing is set</span>
+          </span>
+        </button>
+        <div class="notice" id="notice" hidden></div>
+        <div class="expanded" id="expanded" hidden>
+          <label class="field">
+            <span class="field-key">Region</span>
+            <select id="regionSelect"></select>
+          </label>
+          <div class="field">
+            <span class="field-key">Identity</span>
+            <!-- The answer and the button are siblings. They were not: the
+                 button lived inside the element the answer was written into,
+                 so the first check replaced it with text and there was no way
+                 to ask a second time. -->
+            <span class="field-value" id="identity">
+              <span id="identityText"></span>
+              <button class="quiet" id="identityButton" type="button">Check</button>
+            </span>
+          </div>
+          <div class="field">
+            <span class="field-key"></span>
+            <button class="quiet" id="clearButton" type="button">Clear this profile</button>
+          </div>
+        </div>
+      </header>
+
+      <div class="filters">
+        <input
+          type="search"
+          id="search"
+          placeholder="Search profiles, sessions, accounts"
+          autocomplete="off"
+          autocorrect="off"
+          spellcheck="false"
+        />
+      </div>
+
+      <main id="list"></main>
+
+      <footer>
+        <!-- Actions are on the right click menu and on the keys listed here.
+             A row of buttons down here could only act on the selected row, and
+             the selection follows the pointer: reaching the buttons dragged it
+             across every row in between. -->
+        <span class="hint" id="hint"></span>
+        <button class="quiet" id="settingsButton" type="button">Settings</button>
+      </footer>
+    </section>
+
+    <section id="settings" class="view" hidden>
+      <header class="settings-header">
+        <button class="quiet" id="backButton" type="button">← Back</button>
+        <span class="title">Settings</span>
+      </header>
+
+      <main class="settings-body">
+        <label class="field">
+          <span class="field-key">Shortcut</span>
+          <button class="recorder" id="shortcutButton" type="button">
+            Click and press keys
+          </button>
+          <button class="quiet" id="shortcutClear" type="button" hidden>Clear</button>
+        </label>
+        <p class="field-note" id="shortcutNote">
+          Opens the panel from anywhere. None is set until you choose one.
+        </p>
+
+        <label class="field">
+          <span class="field-key">Theme</span>
+          <select id="themeSelect">
+            <option value="system">Follow the system</option>
+            <option value="light">Light</option>
+            <option value="dark">Dark</option>
+          </select>
+        </label>
+        <p class="field-note">
+          Following the system keeps the panel translucent. Choosing a theme
+          gives it a solid background instead, because macOS fixes a window's
+          appearance when it opens.
+        </p>
+
+        <label class="field">
+          <span class="field-key">Console</span>
+          <select id="browserSelect">
+            <option value="default">Default browser</option>
+            <option value="firefox">Firefox container</option>
+            <option value="zen">Zen container</option>
+          </select>
+        </label>
+        <p class="field-note">
+          Where ⌘↵ and Open Console go. A Firefox container is always reachable
+          on its own, whatever this says.
+        </p>
+
+        <label class="field">
+          <span class="field-key">Renewal</span>
+          <span class="field-value">
+            <span id="renewalState">—</span>
+            <button class="quiet" id="renewalEnable" type="button" hidden>Enable</button>
+          </span>
+        </label>
+        <p class="field-note" id="renewalNote">
+          awsm can renew the active profile's credentials before they expire.
+          This panel only reports what it decided; the renewing is
+          <code>awsm daemon enable</code>.
+        </p>
+
+        <label class="field">
+          <span class="field-key">Login</span>
+          <span class="field-value">
+            <input type="checkbox" id="loginCheckbox" />
+            <label for="loginCheckbox">Open awsm at login</label>
+          </span>
+        </label>
+
+        <div class="keys">
+          <div class="keys-title">Keys</div>
+          <div><kbd>↵</kbd><span>Switch to the profile</span></div>
+          <div><kbd>⌘↵</kbd><span>Open the console, without switching</span></div>
+          <div><kbd>⌘⇧↵</kbd><span>Open it in a Firefox container</span></div>
+          <div><kbd>⌘F</kbd><span>The same, without reaching for ↵</span></div>
+          <div><kbd>⌘C</kbd><span>Copy the account id</span></div>
+          <div><kbd>⌘⇧C</kbd><span>Copy the profile name</span></div>
+          <div><kbd>⌘T</kbd><span>Open a terminal on that profile</span></div>
+          <div><kbd>⌘K</kbd><span>Clear the active profile</span></div>
+          <div><kbd>Esc</kbd><span>Clear the search, then close</span></div>
+        </div>
+
+        <p class="field-note keys-note">
+          Right clicking a profile offers the same actions, on the row under the
+          pointer rather than the selected one. Right clicking the profile at the
+          top of the panel offers them for that one, plus clearing it.
+        </p>
+
+        <div class="paths">
+          <div><span class="field-key">awsm</span><code id="binaryPath"></code></div>
+          <div><span class="field-key">Settings</span><code id="settingsPath"></code></div>
+          <div><span class="field-key">Log</span><code id="logPath"></code></div>
+        </div>
+      </main>
+
+      <footer>
+        <span class="hint" id="settingsHint"></span>
+        <button class="quiet" id="quitButton" type="button">Quit</button>
+      </footer>
+    </section>
+
+    <!-- The right click menu is intercepted by this runtime, not by the page:
+         it reads --custom-contextmenu off the element under the pointer and
+         asks Go to open the native menu. Without it the webview shows its own
+         menu instead, which offers Reload and nothing else.
+
+         It is absent when the page is served by ./devserver, which is plain
+         HTTP with no Wails behind it; the module simply fails to load and
+         everything else still works. -->
+    <script type="module" src="/wails/runtime.js"></script>
+    <script src="panel.js"></script>
+  </body>
+</html>

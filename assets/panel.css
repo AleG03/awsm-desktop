@@ -1,0 +1,516 @@
+/* The panel borrows the system's typeface, spacing and accent colour rather
+   than inventing its own. */
+
+/* Light is the base. The dark tokens appear twice on purpose: once for a
+   system that is dark and has not been overridden, and once for an explicit
+   choice, which has to win over the media query in both directions. */
+:root {
+  color-scheme: light;
+
+  --text: #1d1d1f;
+  --dim: rgba(0, 0, 0, 0.55);
+  --faint: rgba(0, 0, 0, 0.34);
+  --rule: rgba(0, 0, 0, 0.08);
+  --hover: rgba(0, 0, 0, 0.05);
+  --field: rgba(0, 0, 0, 0.05);
+  /* Solid, for the strips that must hide what scrolls under them, and for the
+     whole panel when a theme is chosen rather than followed. */
+  --sheet: #f4f4f6;
+  --accent: Highlight;
+  --accent-text: HighlightText;
+  --warn: #a8480a;
+  --good: #1a7f37;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --text: #f5f5f7;
+    --dim: rgba(255, 255, 255, 0.58);
+    --faint: rgba(255, 255, 255, 0.36);
+    --rule: rgba(255, 255, 255, 0.09);
+    --hover: rgba(255, 255, 255, 0.07);
+    --field: rgba(255, 255, 255, 0.075);
+    --sheet: #2a2a2d;
+    --warn: #ffab6b;
+    --good: #57d364;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --text: #f5f5f7;
+  --dim: rgba(255, 255, 255, 0.58);
+  --faint: rgba(255, 255, 255, 0.36);
+  --rule: rgba(255, 255, 255, 0.09);
+  --hover: rgba(255, 255, 255, 0.07);
+  --field: rgba(255, 255, 255, 0.075);
+  --sheet: #2a2a2d;
+  --warn: #ffab6b;
+  --good: #57d364;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* The hidden attribute is only a display:none in the user agent stylesheet, so
+   any rule here that sets display would quietly override it. */
+[hidden] {
+  display: none !important;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  /* Transparent so the window's own material shows through. */
+  background: transparent;
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text",
+    "Segoe UI", system-ui, "Noto Sans", sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+  overflow: hidden;
+}
+
+/* A theme chosen rather than followed cannot use the window's material: macOS
+   fixes a window's appearance when it is created, so a light panel on a dark
+   desktop would be dark text on a dark blur. It paints its own ground instead. */
+:root[data-theme="light"] body,
+:root[data-theme="dark"] body {
+  background: var(--sheet);
+}
+
+.view {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* --- shared controls ---------------------------------------------------- */
+
+button,
+select,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+.quiet {
+  border: none;
+  background: transparent;
+  color: var(--dim);
+  font-size: 12px;
+  padding: 3px 7px;
+  border-radius: 6px;
+  cursor: default;
+  white-space: nowrap;
+}
+
+.quiet:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.quiet:disabled {
+  color: var(--faint);
+  opacity: 0.6;
+}
+
+select {
+  border: none;
+  background: var(--field);
+  border-radius: 7px;
+  padding: 5px 6px;
+  font-size: 12px;
+  outline: none;
+  max-width: 100%;
+}
+
+/* --- the active profile ------------------------------------------------- */
+
+header {
+  flex: none;
+  padding: 10px 12px 0;
+}
+
+.current {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  padding: 6px 8px;
+  border-radius: 8px;
+  cursor: default;
+}
+
+.current:hover {
+  background: var(--hover);
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: var(--faint);
+  flex: none;
+}
+
+.dot.on {
+  background: var(--good);
+}
+
+.dot.warn {
+  background: var(--warn);
+}
+
+.current-text {
+  min-width: 0;
+  flex: 1;
+}
+
+.current-name {
+  display: block;
+  font-weight: 600;
+  /* The whole name, wrapped if it has to be. Truncating the one profile you
+     are actually using is the least helpful place to save space. */
+  overflow-wrap: anywhere;
+}
+
+.current-meta {
+  display: block;
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.notice {
+  margin: 8px 0 0;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warn) 15%, transparent);
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.notice-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.notice.error {
+  background: color-mix(in srgb, #d7263d 16%, transparent);
+}
+
+/* Progress is not a warning: same strip, calmer ground. */
+.notice.progress {
+  background: var(--field);
+  color: var(--dim);
+}
+
+.expanded {
+  margin: 8px 0 0;
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--field);
+  display: grid;
+  gap: 6px;
+}
+
+/* --- fields ------------------------------------------------------------- */
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.field-key {
+  flex: none;
+  width: 62px;
+  font-size: 11px;
+  color: var(--dim);
+}
+
+.field-value {
+  flex: 1;
+  min-width: 0;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  /* An ARN is worth copying, so this is the one place a mouse may select. */
+  user-select: text;
+  -webkit-user-select: text;
+  overflow-wrap: anywhere;
+}
+
+.field-note {
+  margin: 3px 0 14px 70px;
+  font-size: 11px;
+  color: var(--faint);
+}
+
+/* --- search and session ------------------------------------------------- */
+
+.filters {
+  flex: none;
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+#search {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 10px;
+  border: none;
+  border-radius: 7px;
+  background: var(--field);
+  outline: none;
+}
+
+#search::placeholder {
+  color: var(--faint);
+}
+
+#search:focus-visible {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+/* --- the list ----------------------------------------------------------- */
+
+main {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 8px 6px;
+}
+
+.group {
+  /* Pulled out to the list's own edges: an opaque strip that stopped at the
+     row gutter would let text slide past it on both sides. */
+  margin: 0 -8px;
+  padding: 11px 14px 4px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--sheet);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+/* Rows are only text. The actions live in the footer, so nothing appears or
+   disappears under the pointer and the list never changes width. */
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 8px;
+  border-radius: 7px;
+}
+
+.row:hover {
+  background: var(--hover);
+}
+
+.row.selected {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.row-name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.badge {
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 10px;
+  background: var(--hover);
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+.row.selected .badge {
+  background: rgba(255, 255, 255, 0.24);
+  color: inherit;
+}
+
+.row-region {
+  flex: none;
+  font-size: 11px;
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+.row.selected .row-region {
+  color: inherit;
+  opacity: 0.8;
+}
+
+.empty {
+  padding: 28px 12px;
+  text-align: center;
+  color: var(--faint);
+}
+
+/* --- footer ------------------------------------------------------------- */
+
+footer {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 8px;
+  border-top: 1px solid var(--rule);
+  font-size: 11px;
+  color: var(--faint);
+}
+
+.hint {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding-left: 6px;
+}
+
+/* Keys in the hint line, small enough to be a reminder rather than a label. */
+.hint kbd {
+  font: inherit;
+  color: var(--dim);
+}
+
+/* --- settings ----------------------------------------------------------- */
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 8px 6px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.settings-header .title {
+  font-weight: 600;
+}
+
+.settings-body {
+  padding: 14px 14px 8px;
+}
+
+.recorder {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: var(--field);
+  border-radius: 7px;
+  padding: 5px 8px;
+  font-size: 12px;
+  text-align: left;
+  color: var(--dim);
+  cursor: default;
+}
+
+.recorder.set {
+  color: var(--text);
+}
+
+.recorder.recording {
+  color: var(--text);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.keys {
+  margin-top: 18px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule);
+  display: grid;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--dim);
+}
+
+.keys-title {
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+
+.keys > div {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.keys kbd {
+  flex: none;
+  width: 42px;
+  font: inherit;
+  color: var(--text);
+}
+
+.keys-note {
+  margin-left: 0;
+  margin-top: 10px;
+}
+
+.paths {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule);
+  display: grid;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--faint);
+}
+
+.paths > div {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.paths code {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 10px;
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.busy {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+/* Except the way out. An action that waits on a browser sign-in can run for
+   minutes, and a dimmed panel with no reachable control would be a panel the
+   user has to quit. Opacity cannot be undone by a descendant; pointer-events
+   can, and that is the part that matters here. */
+.busy .notice {
+  pointer-events: auto;
+}
