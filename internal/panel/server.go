@@ -22,6 +22,7 @@ import (
 	"awsm-desktop/internal/logs"
 	"awsm-desktop/internal/settings"
 	"awsm-desktop/internal/terminal"
+	"awsm-desktop/internal/update"
 )
 
 // Server answers the panel's requests.
@@ -49,6 +50,23 @@ type Server struct {
 	// can say so and the panel can refuse to hide while it runs.
 	busy func(doing string)
 
+	// version is this build's own version, and openURL sends the person to a
+	// page in their browser. Both belong to the application around this
+	// package, so they arrive the same way everything else framework-shaped
+	// does.
+	version string
+	openURL func(string) error
+
+	// updates is the checker itself. Its zero value asks GitHub; a test gives
+	// it an endpoint of its own.
+	updates update.Checker
+
+	// release is the page the last check found, remembered here rather than
+	// taken from the request. The panel's HTTP server listens on localhost,
+	// and an endpoint that opens whatever URL it is handed is a wider door
+	// than this feature needs.
+	releaseURL string
+
 	// running is the long operation currently in flight, if any. One at a
 	// time: the panel dims itself while an action runs, and a second action
 	// arriving from the context menu should replace the first rather than
@@ -71,6 +89,11 @@ func New(client *awsm.Client, assets fs.FS, log *slog.Logger, quit func()) *Serv
 // else -- a browser, a terminal -- should not leave the panel floating on top
 // of where they were sent.
 func (s *Server) OnHide(hide func()) { s.hide = hide }
+
+// OnUpdates wires the version this build reports and the way to open a page.
+func (s *Server) OnUpdates(version string, openURL func(string) error) {
+	s.version, s.openURL = version, openURL
+}
 
 // OnLoginItem wires reading and writing the "open at login" registration.
 func (s *Server) OnLoginItem(read func() bool, write func(bool) error) {
@@ -243,6 +266,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/settings", s.handleWriteSettings)
 	mux.HandleFunc("POST /api/copy", s.handleCopy)
 	mux.HandleFunc("POST /api/daemon/enable", s.handleEnableDaemon)
+	mux.HandleFunc("POST /api/update/check", s.handleCheckForUpdate)
+	mux.HandleFunc("POST /api/update/open", s.handleOpenRelease)
 	mux.HandleFunc("POST /api/cancel", s.handleCancel)
 	mux.HandleFunc("POST /api/hide", s.handleHide)
 	mux.HandleFunc("POST /api/quit", s.handleQuit)
@@ -705,6 +730,48 @@ func (s *Server) handleEnableDaemon(w http.ResponseWriter, r *http.Request) {
 	}
 	s.notifyChanged()
 	writeJSON(w, http.StatusOK, map[string]string{"renewal": renewal(s.client.Daemon(r.Context()))})
+}
+
+// handleCheckForUpdate asks GitHub whether a newer release exists.
+//
+// Nothing is downloaded and nothing is replaced: the answer is a sentence and,
+// when there is something to see, a page the person can choose to open.
+func (s *Server) handleCheckForUpdate(w http.ResponseWriter, r *http.Request) {
+	// s.version is empty for a build that was never released, which Check
+	// already declines to compare: no remapping needed here, and the panel
+	// puts a name to it.
+	found, err := s.updates.Check(r.Context(), s.version)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+
+	s.mu.Lock()
+	s.releaseURL = found.URL
+	s.mu.Unlock()
+
+	writeJSON(w, http.StatusOK, found)
+}
+
+// handleOpenRelease opens the page the last check found.
+func (s *Server) handleOpenRelease(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	url := s.releaseURL
+	s.mu.Unlock()
+
+	if url == "" {
+		s.fail(w, fmt.Errorf("check for an update first"))
+		return
+	}
+	if s.openURL == nil {
+		s.fail(w, fmt.Errorf("this build cannot open a browser"))
+		return
+	}
+	if err := s.openURL(url); err != nil {
+		s.fail(w, fmt.Errorf("could not open the release page: %w", err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"opened": url})
 }
 
 func (s *Server) handleWriteSettings(w http.ResponseWriter, r *http.Request) {

@@ -554,3 +554,113 @@ func TestASettingTheSystemRefusesIsNotWrittenDown(t *testing.T) {
 		t.Errorf("the file now says %q; the refused one was written down", got)
 	}
 }
+
+// github stands in for the releases endpoint.
+func github(t *testing.T, body string) string {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	t.Cleanup(server.Close)
+	return server.URL
+}
+
+func TestCheckingForAnUpdateReportsANewerRelease(t *testing.T) {
+	s := newTestServer(t, "")
+	s.updates.Endpoint = github(t, `{"tag_name":"v9.0.0","html_url":"https://example.com/releases/v9.0.0"}`)
+	s.OnUpdates("0.4.1", func(string) error { return nil })
+
+	code, body := request(t, s, "POST", "/api/update/check", "")
+	if code != http.StatusOK {
+		t.Fatalf("status %d: %+v", code, body)
+	}
+	if body["newer"] != true {
+		t.Errorf("newer = %v, want true: %+v", body["newer"], body)
+	}
+	if body["latest"] != "9.0.0" || body["current"] != "0.4.1" {
+		t.Errorf("versions lost: %+v", body)
+	}
+}
+
+// TestABuildWithNoVersionIsNotCalledOutOfDate: `make app` compiles no version
+// in, and comparing that against the releases would report an update on every
+// press forever.
+func TestABuildWithNoVersionIsNotCalledOutOfDate(t *testing.T) {
+	s := newTestServer(t, "")
+	s.updates.Endpoint = github(t, `{"tag_name":"v9.0.0","html_url":"https://example.com"}`)
+	// Deliberately not calling OnUpdates: a build made by hand has no version.
+
+	code, body := request(t, s, "POST", "/api/update/check", "")
+	if code != http.StatusOK {
+		t.Fatalf("status %d: %+v", code, body)
+	}
+	if body["newer"] != false {
+		t.Errorf("newer = %v, want false for a development build", body["newer"])
+	}
+	if body["comparable"] != false {
+		t.Errorf("comparable = %v, want false", body["comparable"])
+	}
+	if body["current"] != "" {
+		t.Errorf("current = %q, want it left empty for the panel to name", body["current"])
+	}
+	if body["latest"] != "9.0.0" {
+		t.Errorf("latest = %v: the newest release is still worth showing", body["latest"])
+	}
+}
+
+// TestOpeningTheReleaseUsesTheURLFromTheCheck.
+//
+// The endpoint takes no URL. This server listens on localhost, but anything
+// that can reach it could otherwise ask the application to open any address it
+// liked, and opening pages on somebody's behalf is not a favour to hand out.
+func TestOpeningTheReleaseUsesTheURLFromTheCheck(t *testing.T) {
+	s := newTestServer(t, "")
+	s.updates.Endpoint = github(t, `{"tag_name":"v9.0.0","html_url":"https://example.com/releases/v9.0.0"}`)
+
+	var opened []string
+	s.OnUpdates("0.4.1", func(url string) error {
+		opened = append(opened, url)
+		return nil
+	})
+
+	// Before any check there is nothing to open, and saying so beats opening
+	// something arbitrary. Failures here travel in the body, not the status,
+	// so that the message survives intact -- see fail().
+	if _, body := request(t, s, "POST", "/api/update/open", ""); body["error"] == nil {
+		t.Error("opened a release page before any check had been made")
+	}
+	if len(opened) != 0 {
+		t.Fatalf("opened %v before any check", opened)
+	}
+
+	request(t, s, "POST", "/api/update/check", "")
+	if code, body := request(t, s, "POST", "/api/update/open", ""); code != http.StatusOK {
+		t.Fatalf("status %d: %+v", code, body)
+	}
+
+	if len(opened) != 1 || opened[0] != "https://example.com/releases/v9.0.0" {
+		t.Errorf("opened %v, want the URL the check returned", opened)
+	}
+}
+
+// TestTheOpenEndpointIgnoresAURLItIsHanded: passing one in the body must not
+// steer it.
+func TestTheOpenEndpointIgnoresAURLItIsHanded(t *testing.T) {
+	s := newTestServer(t, "")
+	s.updates.Endpoint = github(t, `{"tag_name":"v9.0.0","html_url":"https://example.com/real"}`)
+
+	var opened []string
+	s.OnUpdates("0.4.1", func(url string) error {
+		opened = append(opened, url)
+		return nil
+	})
+
+	request(t, s, "POST", "/api/update/check", "")
+	request(t, s, "POST", "/api/update/open", `{"url":"https://evil.example/attack"}`)
+
+	for _, url := range opened {
+		if strings.Contains(url, "evil.example") {
+			t.Errorf("opened %q: a URL from the request steered the browser", url)
+		}
+	}
+}

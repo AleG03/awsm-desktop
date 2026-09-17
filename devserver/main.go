@@ -35,6 +35,15 @@ func main() {
 		func() { os.Exit(0) },
 	)
 
+	// The update check, with the version under the operator's control so both
+	// answers can be looked at: AWSM_DESKTOP_VERSION=0.0.1 to see one offered,
+	// unset to see what a build made by hand reports. Nothing is opened here --
+	// the address is printed instead, which is what there is to check.
+	server.OnUpdates(os.Getenv("AWSM_DESKTOP_VERSION"), func(url string) error {
+		log.Printf("would open %s", url)
+		return nil
+	})
+
 	log.Printf("panel on http://%s (assets read from ./assets)", address)
 	log.Fatal(http.ListenAndServe(address, server.Handler()))
 }

@@ -41,6 +41,10 @@ const ui = {
   renewalState: el("renewalState"),
   renewalEnable: el("renewalEnable"),
   renewalNote: el("renewalNote"),
+  versionState: el("versionState"),
+  versionCheck: el("versionCheck"),
+  versionOpen: el("versionOpen"),
+  versionNote: el("versionNote"),
   binaryPath: el("binaryPath"),
   settingsPath: el("settingsPath"),
   logPath: el("logPath"),
@@ -173,9 +177,14 @@ function render() {
       appendGroup(name, profiles);
     }
   } else {
-    // While searching, the headings would break the results into fragments
-    // that the search has already made one list.
-    appendGroup(null, found);
+    // Grouped while searching too. The headings do break the results up, but
+    // the session a profile belongs to is most of what tells two similarly
+    // named ones apart -- which is exactly the moment a search leaves you
+    // looking at several of them. Recents are left out here: a search has its
+    // own idea of what is relevant.
+    for (const [name, profiles] of bySession(found)) {
+      appendGroup(name, profiles);
+    }
   }
 
   selected = Math.max(0, Math.min(selected, rows.length - 1));
@@ -699,6 +708,53 @@ function enableRenewal() {
     });
 }
 
+// The note under the Version row, restored when a check starts again.
+const VERSION_NOTE =
+  "Asks GitHub whether a newer release exists. It only looks: nothing is " +
+  "downloaded and nothing here is replaced.";
+
+function checkForUpdate() {
+  ui.versionCheck.disabled = true;
+  ui.versionOpen.hidden = true;
+  ui.versionState.textContent = "Checking…";
+  ui.versionNote.textContent = VERSION_NOTE;
+
+  post("/api/update/check")
+    .then((found) => {
+      if (found.newer) {
+        ui.versionState.textContent = `${found.current} → ${found.latest}`;
+        ui.versionOpen.hidden = false;
+        ui.versionNote.textContent = `Version ${found.latest} has been released.`;
+        return;
+      }
+      if (!found.comparable) {
+        // Either this build carries no version, or the released tag is not one
+        // this can read. Both are worth saying plainly rather than dressing up
+        // as "up to date", which would be a claim nothing here established.
+        ui.versionState.textContent = found.current || "development build";
+        ui.versionOpen.hidden = false;
+        ui.versionNote.textContent =
+          `The latest release is ${found.latest}. This build cannot be compared against it.`;
+        return;
+      }
+      ui.versionState.textContent = found.current;
+      ui.versionNote.textContent = `The latest release is ${found.latest}. This is it.`;
+    })
+    .catch((error) => {
+      ui.versionState.textContent = "—";
+      ui.versionNote.textContent = String(error.message || error);
+    })
+    .finally(() => {
+      ui.versionCheck.disabled = false;
+    });
+}
+
+function openRelease() {
+  post("/api/update/open").catch((error) => {
+    ui.versionNote.textContent = String(error.message || error);
+  });
+}
+
 function renderShortcut() {
   const set = Boolean(prefs.shortcut);
   ui.shortcutButton.textContent = set ? pretty(prefs.shortcut) : "Click and press keys";
@@ -922,6 +978,8 @@ ui.loginCheckbox.addEventListener("change", () =>
   saveSettings({ openAtLogin: ui.loginCheckbox.checked }),
 );
 ui.renewalEnable.addEventListener("click", enableRenewal);
+ui.versionCheck.addEventListener("click", checkForUpdate);
+ui.versionOpen.addEventListener("click", openRelease);
 ui.quitButton.addEventListener("click", () => post("/api/quit"));
 
 // watchForChanges listens for the session changing without the page's

@@ -5,6 +5,11 @@
    system that is dark and has not been overridden, and once for an explicit
    choice, which has to win over the media query in both directions. */
 :root {
+  /* The height of a sticky group heading. Two rules depend on it agreeing with
+     what a heading actually measures: .group sets it, and .row keeps the
+     selected row from scrolling underneath one. */
+  --group-height: 29px;
+
   color-scheme: light;
 
   --text: #1d1d1f;
@@ -306,6 +311,10 @@ main {
   /* Pulled out to the list's own edges: an opaque strip that stopped at the
      row gutter would let text slide past it on both sides. */
   margin: 0 -8px;
+  /* Fixed rather than derived from the padding and the text, so that .row's
+     scroll-margin-top below can match it. The two have to agree: see there. */
+  height: var(--group-height);
+  box-sizing: border-box;
   padding: 11px 14px 4px;
   position: sticky;
   top: 0;
@@ -326,6 +335,15 @@ main {
   gap: 10px;
   padding: 5px 8px;
   border-radius: 7px;
+  /* The group headings are sticky, so they cover the top of the list. Without
+     this, arrowing *upwards* scrolls the selected row to the very top of the
+     scrollport -- which is exactly where a heading is sitting -- and the row
+     you just selected disappears underneath it. Measured before this line:
+     29px of a 28px row hidden, so effectively all of it.
+
+     scrollIntoView honours scroll-margin, so reserving the heading's height
+     here stops the row short of it. It must stay equal to --group-height. */
+  scroll-margin-top: var(--group-height);
 }
 
 .row:hover {

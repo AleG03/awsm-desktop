@@ -13,6 +13,15 @@ name="awsm"
 identifier="io.github.aleg03.awsm.desktop"
 version="${VERSION:-0.1.0}"
 
+# What the application reports about itself, which is not the same thing.
+#
+# The bundle's Info.plist needs a number whatever happens, so it falls back to
+# 0.1.0. The version compiled in stays empty unless this is a real release, so
+# that a build made by hand reports itself as a development build instead of
+# claiming to be 0.1.0 and looking permanently out of date next to the
+# releases.
+ldversion="${VERSION:-}"
+
 root="$(cd "$(dirname "$0")/.." && pwd)"
 out="${OUT:-$root/dist}"
 app="$out/$name.app"
@@ -45,7 +54,7 @@ slice() {
 	echo "  compiling for $2"
 	(cd "$root" && GOARCH="$1" CGO_ENABLED=1 \
 		CC="clang -arch $2" CXX="clang++ -arch $2" \
-		go build -trimpath -ldflags "-s -w" -o "$3" .)
+		go build -trimpath -ldflags "-s -w -X main.version=$ldversion" -o "$3" .)
 }
 
 case "$arch" in

@@ -31,6 +31,15 @@ import (
 //go:embed all:assets
 var assets embed.FS
 
+// version is this build's own version, set at link time by build/package.sh
+// from the tag being released.
+//
+// It stays empty for a build made any other way -- `make app`, or `go build`
+// while working -- and an empty version is reported as a development build
+// rather than compared against the releases, which would otherwise call every
+// local build out of date on every check.
+var version string
+
 const (
 	// Wide enough for nine names out of ten on a single line. Measured against
 	// the 304 profiles this was built for: 400 points wraps 80 of them, 440
@@ -184,6 +193,10 @@ func main() {
 	// browser or a terminal, which should not leave the panel on top of where
 	// they were sent.
 	server.OnHide(func() { window.Hide() })
+
+	// Checking for a new version, and opening its page if the person wants it.
+	// Nothing is downloaded and nothing is replaced here: this reports.
+	server.OnUpdates(version, app.Browser.OpenURL)
 
 	tray := app.SystemTray.New()
 	installIcon(tray)

@@ -102,8 +102,15 @@ follows the profile.
 
 **Settings** is in the footer: a system-wide shortcut that opens the panel from
 anywhere, the theme, which browser the **Console** action opens in, whether
-credentials are being renewed in the background, and whether awsm starts at
-login. It also shows where awsm, the settings file and the log live.
+credentials are being renewed in the background, whether awsm starts at login,
+and a check for a newer release. It also shows where awsm, the settings file and
+the log live.
+
+The version check only looks. It asks GitHub for the latest release, compares it
+with the version this build was packaged from, and offers to open that release's
+page — nothing is downloaded and nothing here is replaced. A build made with
+`make app` carries no version and says so, rather than being reported as
+perpetually out of date against every release.
 No shortcut is registered until you choose one — claiming a key combination
 across the whole machine without being asked is a good way to break somebody
 else's application. If the one you pick is already owned by something, the panel
