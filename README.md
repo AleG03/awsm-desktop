@@ -16,6 +16,8 @@ asks it and draws the answer.
 
 - `awsm` on the machine. `/usr/local/bin` and `/opt/homebrew/bin` are checked
   first, then `PATH`. Set `AWSM_BIN` to point somewhere else.
+- The **AWS CLI**, which awsm uses for SSO sign-ins. It does not have to be on
+  your shell's `PATH` for this to find it — see below.
 - Go 1.25 and the Xcode Command Line Tools to build. **Xcode itself is not
   needed.**
 
@@ -231,6 +233,22 @@ forever. Ten minutes is not a thing to sit through, so the panel offers
 
 Everything that only reads local files keeps a much tighter bound: the status
 bar asks on a fifteen second timer and has to give up long before the next one.
+
+### The PATH an application is given
+
+A GUI application launched from the Finder or at login gets launchd's `PATH` —
+`/usr/bin:/bin:/usr/sbin:/sbin`, and nothing a shell profile would have added.
+Finding awsm itself is handled by looking in the usual places by absolute path.
+
+That was enough right up until awsm needed to run something of its own: `awsm
+sso login` shells out to the AWS CLI, which installs to `/usr/local/bin` and is
+not on that `PATH`. Renewing an SSO session then failed, reporting that `aws`
+could not be found — from an application that had launched perfectly well.
+
+So the `PATH` handed to awsm gets `/usr/local/bin`, `/opt/homebrew/bin`,
+`/opt/local/bin` and awsm's own directory appended, and only where those
+directories exist. Appended rather than prepended: a `PATH` that already names a
+tool is one somebody arranged deliberately.
 
 ## What it will not do
 

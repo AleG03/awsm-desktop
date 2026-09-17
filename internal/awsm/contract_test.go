@@ -1,6 +1,7 @@
 package awsm
 
 import (
+	"errors"
 	"os/exec"
 	"strings"
 	"testing"
@@ -133,5 +134,34 @@ func TestTheDaemonStatusStillSaysWhatItsStateIs(t *testing.T) {
 	status := client.Daemon(t.Context())
 	if !status.Known {
 		t.Error("could not read a state out of `awsm daemon status`: the output format changed")
+	}
+}
+
+func TestTheAwsCliIsReachableFromWhereThePanelRunsAwsm(t *testing.T) {
+	// The reported bug, against the real thing. `awsm sso login` shells out to
+	// the AWS CLI, and a renewal from the panel failed saying aws could not be
+	// found -- because a GUI application is given launchd's PATH and hands it
+	// straight on.
+	//
+	// awsm doctor answers the question without signing anything in: it reports
+	// whether the tools it needs are on the PATH it was given.
+	client := realAwsm(t)
+
+	// What a bundle launched from the Finder or at login actually gets.
+	t.Setenv("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+
+	out, err := client.runReadingStderr(t.Context(), "doctor")
+	if err != nil {
+		// doctor exits non-zero when it finds problems, which is the point.
+		var failed *Error
+		if !errors.As(err, &failed) {
+			t.Fatalf("doctor: %v", err)
+		}
+		out = []byte(failed.Stderr)
+	}
+
+	if strings.Contains(string(out), "aws CLI not found") {
+		t.Errorf("awsm cannot find the AWS CLI on the PATH the panel gives it:\n%s",
+			string(out))
 	}
 }

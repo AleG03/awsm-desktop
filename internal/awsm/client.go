@@ -59,6 +59,24 @@ var searchPaths = []string{
 	"/usr/bin/awsm",
 }
 
+// toolPaths are where command line tools install, and where the PATH a GUI
+// application is given does not look.
+//
+// Finding awsm was solved by the list above, which was enough right up until
+// awsm needed to run something itself: `awsm sso login` shells out to the AWS
+// CLI, which installs to /usr/local/bin. Launched from the Finder or at login
+// this application gets launchd's PATH -- /usr/bin:/bin:/usr/sbin:/sbin and
+// nothing a shell profile would have added -- and hands it to awsm, which then
+// cannot find aws and fails the renewal saying so.
+//
+// Only directories that exist are added, which is what keeps this harmless on
+// the platforms where these paths mean nothing.
+var toolPaths = []string{
+	"/usr/local/bin",
+	"/opt/homebrew/bin",
+	"/opt/local/bin",
+}
+
 // New locates the awsm binary and returns a client for it.
 //
 // AWSM_BIN overrides the search entirely, which is what makes it possible to
@@ -112,6 +130,52 @@ func executable(path string) error {
 		return fmt.Errorf("%s is not executable", path)
 	}
 	return nil
+}
+
+// environment is what awsm runs in, with PATH repaired.
+//
+// See toolPaths for why. awsm's own directory goes on as well: whatever
+// installed it is a reasonable guess at where its companions are.
+func (c *Client) environment() []string {
+	wanted := append([]string{filepath.Dir(c.bin)}, toolPaths...)
+
+	environment := os.Environ()
+	for i, entry := range environment {
+		if after, found := strings.CutPrefix(entry, "PATH="); found {
+			environment[i] = "PATH=" + extend(after, wanted)
+			return environment
+		}
+	}
+	return append(environment, "PATH="+extend("", wanted))
+}
+
+// extend appends the directories that are not on the path already and do exist.
+//
+// Appended rather than prepended: a PATH that does name a tool already is one
+// somebody arranged on purpose, and this is here to fill a gap rather than to
+// overrule them.
+func extend(path string, wanted []string) string {
+	var parts []string
+	present := map[string]bool{}
+
+	if path != "" {
+		parts = strings.Split(path, ":")
+		for _, part := range parts {
+			present[part] = true
+		}
+	}
+
+	for _, dir := range wanted {
+		if dir == "" || dir == "." || present[dir] {
+			continue
+		}
+		if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+			continue
+		}
+		present[dir] = true
+		parts = append(parts, dir)
+	}
+	return strings.Join(parts, ":")
 }
 
 // Error is a failed invocation, carrying what the command wrote to stderr.
@@ -200,6 +264,7 @@ func (c *Client) runWithin(ctx context.Context, limit time.Duration, args ...str
 // immediately in EOF rather than waiting on a terminal that does not exist.
 func (c *Client) command(ctx context.Context, args ...string) (*exec.Cmd, func(), error) {
 	cmd := exec.CommandContext(ctx, c.bin, args...)
+	cmd.Env = c.environment()
 	configure(cmd)
 
 	// Even with the whole group killed, a process can take a moment to let go

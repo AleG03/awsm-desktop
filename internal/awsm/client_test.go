@@ -319,3 +319,59 @@ func TestAnUnreadableDaemonStateIsNotReportedAsOff(t *testing.T) {
 		})
 	}
 }
+
+func TestAwsmIsGivenAPathThatCanFindItsOwnTools(t *testing.T) {
+	// The bug this fixes, as reported: renewing an SSO session failed saying
+	// aws could not be found. Launched from the Finder or at login this
+	// application gets launchd's PATH -- /usr/bin:/bin:/usr/sbin:/sbin -- and
+	// passes it to awsm, which runs `aws sso login` and cannot find the AWS
+	// CLI, because that installs to /usr/local/bin.
+	t.Setenv("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+
+	c := fakeAwsm(t, `echo "$PATH"`)
+	out, err := c.run(t.Context(), "prompt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := strings.TrimSpace(string(out))
+
+	if !strings.Contains(path, "/usr/local/bin") {
+		t.Errorf("awsm would run with PATH=%s, which cannot find the AWS CLI", path)
+	}
+	// And what was already there has to survive: awsm runs /usr/bin things too.
+	for _, want := range []string{"/usr/bin", "/bin"} {
+		if !strings.Contains(path, want) {
+			t.Errorf("PATH=%s lost %s", path, want)
+		}
+	}
+}
+
+func TestAPathThatAlreadyWorksIsLeftAlone(t *testing.T) {
+	// Run from a terminal this inherits a real PATH, and somebody who arranged
+	// their own tools first meant it. The repair fills a gap; it does not
+	// overrule.
+	t.Setenv("PATH", "/usr/local/bin:/usr/bin:/bin")
+
+	c := fakeAwsm(t, `echo "$PATH"`)
+	out, err := c.run(t.Context(), "prompt")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	path := strings.TrimSpace(string(out))
+	if !strings.HasPrefix(path, "/usr/local/bin:/usr/bin:/bin") {
+		t.Errorf("PATH=%s: the order somebody chose was not kept", path)
+	}
+	if strings.Count(path, "/usr/local/bin") != 1 {
+		t.Errorf("PATH=%s has /usr/local/bin more than once", path)
+	}
+}
+
+func TestOnlyDirectoriesThatExistAreAdded(t *testing.T) {
+	// These paths mean nothing on Windows, and little on some Linuxes. Adding
+	// a directory that is not there would be litter at best.
+	missing := filepath.Join(t.TempDir(), "nowhere")
+	if got := extend("/usr/bin", []string{missing}); got != "/usr/bin" {
+		t.Errorf("got %q, want the path unchanged", got)
+	}
+}
