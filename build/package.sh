@@ -25,28 +25,53 @@ echo "building $name $version"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 
-# ARCH names the architecture to build for, as Go spells it. It defaults to
-# this machine's, so a local build stays a local build; the release sets it and
-# runs this twice, because a Mac is one or the other and a download for the
-# wrong one does not start at all.
+binary="$app/Contents/MacOS/$name"
+
+# ARCH says what to build for: arm64, amd64, or universal for one binary that
+# runs on both. It defaults to this machine's, so a local build stays a local
+# build and does not pay for a second architecture nobody here is going to run.
 #
-# The architecture is passed to the compiler explicitly in both cases rather
-# than letting one of them be whatever the host happens to be, so this behaves
-# the same on an Apple silicon Mac and on an Intel one.
+# The release builds universal. Two downloads meant choosing between them, and
+# choosing wrong does not fail cleanly: macOS runs the Intel one under Rosetta
+# and warns about it, which reads as something being wrong with the application.
+#
+# The architecture is passed to the compiler explicitly in every case rather
+# than letting it be whatever the host happens to be, so this behaves the same
+# on an Apple silicon Mac and on an Intel one.
 arch="${ARCH:-$(go env GOARCH)}"
+
+# slice builds one architecture: goarch, the name clang knows it by, output.
+slice() {
+	echo "  compiling for $2"
+	(cd "$root" && GOARCH="$1" CGO_ENABLED=1 \
+		CC="clang -arch $2" CXX="clang++ -arch $2" \
+		go build -trimpath -ldflags "-s -w" -o "$3" .)
+}
+
 case "$arch" in
-arm64) machine=arm64 ;;
-amd64) machine=x86_64 ;;
+arm64)
+	slice arm64 arm64 "$binary"
+	;;
+amd64)
+	slice amd64 x86_64 "$binary"
+	;;
+universal)
+	parts="$out/slices"
+	rm -rf "$parts"
+	mkdir -p "$parts"
+	slice arm64 arm64 "$parts/arm64"
+	slice amd64 x86_64 "$parts/amd64"
+	# lipo puts both into one file. Nothing is shared between them -- they are
+	# two different sets of machine code -- so the result is the size of both.
+	lipo -create "$parts/arm64" "$parts/amd64" -output "$binary"
+	rm -rf "$parts"
+	;;
 *)
-	echo "unknown architecture: $arch (want arm64 or amd64)" >&2
+	echo "unknown architecture: $arch (want arm64, amd64 or universal)" >&2
 	exit 1
 	;;
 esac
 
-echo "  for $machine"
-(cd "$root" && GOARCH="$arch" CGO_ENABLED=1 \
-	CC="clang -arch $machine" CXX="clang++ -arch $machine" \
-	go build -trimpath -ldflags "-s -w" -o "$app/Contents/MacOS/$name" .)
 
 # The icon is drawn from the same geometry as the status bar mark rather than
 # checked in, so there is no binary in the repository and every size is rendered

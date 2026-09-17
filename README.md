@@ -336,24 +336,45 @@ git tag v0.2.0
 git push origin v0.2.0
 ```
 
-The bundle is named after the tag — `VERSION` reaches `build/package.sh`, so
-what `CFBundleShortVersionString` says and what the release says cannot
-disagree — and the zip is attached to a permanent, public release. Every run
-also keeps it as a **workflow artifact**, which is what a manual dispatch from
-the Actions tab leaves behind when there is no tag to release: attached to the
-run, ninety days, and a GitHub login needed to fetch it.
+One download, `awsm-macos.zip`, and it runs on every Mac: the bundle is
+**universal**, carrying both Apple silicon and Intel.
+
+That costs about four megabytes — 8.2 MB against 3.9 for a single architecture,
+since the two halves share nothing and each carries the page's assets. The
+alternative was two downloads, smaller but asking the person to choose, and
+choosing wrong does not fail cleanly: macOS runs the Intel one under Rosetta and
+warns about it, which reads as something being wrong with the application rather
+than with the download.
+
+Both halves are compiled on the same Apple silicon runner and fused with `lipo`
+— the macOS SDK carries both architectures, so the Intel half needs no Intel
+runner. That also means the second half could quietly come out a copy of the
+first, so the workflow reads back what it built with `lipo -archs` and fails
+unless both are in there.
+
+It checks `Info.plist` as well, which is not belt and braces. The plist is
+written by a heredoc, so a stray line in the packaging script lands inside it —
+and `codesign` does not object: it falls back to an identifier derived from a
+hash and signs anyway. A bundle with a corrupt plist will otherwise reach a
+release looking perfectly signed.
+
+The version comes from the tag: `VERSION` reaches `build/package.sh`, so what
+`CFBundleShortVersionString` says and what the release says cannot disagree.
+
+Every run also keeps the zip as a **workflow artifact**, which is what a manual
+dispatch from the Actions tab leaves behind when there is no tag to release:
+attached to the run, ninety days, and a GitHub login needed to fetch it.
 
 There is nothing under **Packages**, and there never will be: that is for npm,
 Docker, Maven and NuGet registries, and an application bundle is none of them.
 
-Building for one architecture by hand, if you ever need to:
+`ARCH` picks what to build — `arm64`, `amd64` or `universal` — and defaults to
+the machine you are on, so `make app` and `make install` stay local builds and
+do not pay for an architecture nobody here is going to run.
 
 ```sh
-OUT=dist/amd64 ARCH=amd64 ./build/package.sh
+ARCH=universal ./build/package.sh
 ```
-
-`ARCH` defaults to the machine you are on, so `make app` stays a local build and
-does not pay for a second architecture nobody here is going to run.
 
 **A released bundle is still signed ad-hoc.** That is enough to run it yourself
 and not enough for Gatekeeper on somebody else's machine, which will refuse it

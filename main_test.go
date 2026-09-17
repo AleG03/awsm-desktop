@@ -484,19 +484,23 @@ func TestClearingTheShortcutReleasesIt(t *testing.T) {
 }
 
 func TestBothArchitecturesAreBuiltAndChecked(t *testing.T) {
-	// A Mac is Apple silicon or Intel, and a bundle built for the other one
-	// does not start at all. Both are cross compiled on the same runner, which
-	// is exactly the arrangement where they quietly come out identical -- so
-	// the workflow has to build two and then prove they are two.
+	// A Mac is Apple silicon or Intel, and the release ships one bundle that
+	// holds both so that nobody has to choose. Both halves are compiled on the
+	// same runner and fused, which is exactly the arrangement where the second
+	// one quietly turns out to be a copy of the first -- so the workflow reads
+	// back what it built.
 	//
-	// Nothing here can fail in CI: it fails when someone downloads the wrong
-	// half and says it is broken.
+	// Nothing here can fail in CI on its own: it fails when someone downloads
+	// the result and it will not start on their machine.
 	script, err := os.ReadFile("build/package.sh")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(script), `arch="${ARCH:-$(go env GOARCH)}"`) {
-		t.Error("build/package.sh no longer takes an architecture, so both builds would be the host's")
+		t.Error("build/package.sh no longer takes an architecture")
+	}
+	if !strings.Contains(string(script), "lipo -create") {
+		t.Error("build/package.sh no longer fuses the two architectures into one binary")
 	}
 
 	workflow, err := os.ReadFile(".github/workflows/build.yml")
@@ -504,10 +508,10 @@ func TestBothArchitecturesAreBuiltAndChecked(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		`for arch in arm64 amd64; do`,     // both are built
-		`ARCH="$arch" ./build/package.sh`, // and built as that architecture
-		`lipo -archs`,                     // and what came out is checked
-		`dist/awsm-macos-*.zip`,           // and both are released
+		`ARCH=universal ./build/package.sh`, // one bundle, both architectures
+		`lipo -archs`,                       // and what came out is checked
+		`plutil -lint`,                      // along with the plist codesign would ignore
+		`dist/awsm-macos.zip`,               // and that is what is released
 	} {
 		if !strings.Contains(string(workflow), want) {
 			t.Errorf("the workflow no longer contains %q", want)

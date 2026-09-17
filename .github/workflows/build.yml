@@ -1,5 +1,11 @@
 # Builds the macOS application bundle and attaches it to a release.
 #
+# One bundle, universal: it carries both architectures, so there is nothing for
+# anyone to choose. Two downloads meant choosing, and choosing wrong does not
+# fail cleanly -- macOS runs the Intel one under Rosetta and warns about it,
+# which reads as something being wrong with the application rather than with the
+# download. The cost is about four megabytes.
+#
 # Only on a version tag: a build is something that happens when a version is
 # cut, not on every push. Nothing here watches ordinary commits, so the tests
 # and the formatting check run when the tag does -- which means a tag is the
@@ -79,10 +85,9 @@ jobs:
           GOARCH: amd64
         run: go build -o /dev/null .
 
-      - name: Build both bundles
-        # One for Apple silicon and one for Intel. Both are cross compiled on
-        # this runner -- the macOS SDK carries both architectures, so an Intel
-        # runner is not needed for the Intel build.
+      - name: Build the universal bundle
+        # Both architectures are compiled here and fused with lipo. The macOS
+        # SDK carries both, so the Intel half needs no Intel runner.
         run: |
           # A tagged build names itself after the tag, so the version inside the
           # bundle and the version on the release cannot disagree. Everything
@@ -90,50 +95,57 @@ jobs:
           if [ "$GITHUB_REF_TYPE" = tag ]; then
             export VERSION="${GITHUB_REF_NAME#v}"
           fi
-          for arch in arm64 amd64; do
-            OUT="dist/$arch" ARCH="$arch" ./build/package.sh
-          done
+          ARCH=universal ./build/package.sh
 
-      - name: Check both bundles came out whole
-        # The architecture check is the one that matters. Building twice on one
-        # runner is exactly the arrangement where both downloads quietly come
-        # out for the same machine, and the one that is wrong does not start at
-        # all -- which the person who downloaded it reports, not this workflow.
+      - name: Check the bundle came out whole
+        # The architecture check is the one that matters. Compiling twice on one
+        # runner and fusing the results is exactly the arrangement where the
+        # second half quietly turns out to be a copy of the first -- and what
+        # comes out then starts on half the Macs it claims to, which the person
+        # who downloaded it discovers, not this workflow.
         run: |
           set -e
-          for arch in arm64:arm64 amd64:x86_64; do
-            name="${arch%%:*}"
-            want="${arch##*:}"
-            app="dist/$name/awsm.app"
+          app=dist/awsm.app
 
-            test -x "$app/Contents/MacOS/awsm"
-            test -f "$app/Contents/Info.plist"
-            test -f "$app/Contents/Resources/awsm.icns"
-            codesign --verify --verbose "$app"
+          test -x "$app/Contents/MacOS/awsm"
+          test -f "$app/Contents/Resources/awsm.icns"
 
-            got="$(lipo -archs "$app/Contents/MacOS/awsm")"
-            if [ "$got" != "$want" ]; then
-              echo "dist/$name holds $got, expected $want" >&2
+          # The plist is written by a heredoc, so a stray line in the script
+          # ends up inside it. codesign does not mind: it falls back to an
+          # identifier derived from a hash and signs anyway, which is how a
+          # bundle with a corrupt Info.plist gets all the way to a release.
+          plutil -lint "$app/Contents/Info.plist"
+          id="$(plutil -extract CFBundleIdentifier raw "$app/Contents/Info.plist")"
+          if [ "$id" != io.github.aleg03.awsm.desktop ]; then
+            echo "the bundle identifier is $id" >&2
+            exit 1
+          fi
+
+          codesign --verify --verbose "$app"
+
+          archs="$(lipo -archs "$app/Contents/MacOS/awsm")"
+          for want in arm64 x86_64; do
+            case " $archs " in
+            *" $want "*) ;;
+            *)
+              echo "the bundle holds [$archs], with no $want in it" >&2
               exit 1
-            fi
-            echo "dist/$name: $got, signed"
+              ;;
+            esac
           done
+          echo "universal: $archs, signed"
 
-      - name: Package both bundles
+      - name: Package the bundle
         # ditto rather than zip: it is what preserves a bundle's structure and
         # the executable bit, which uploading a directory would lose.
         run: |
-          set -e
-          for arch in arm64 amd64; do
-            ditto -c -k --sequesterRsrc --keepParent \
-              "dist/$arch/awsm.app" "dist/awsm-macos-$arch.zip"
-          done
-          ls -lh dist/awsm-macos-*.zip
+          ditto -c -k --sequesterRsrc --keepParent dist/awsm.app dist/awsm-macos.zip
+          ls -lh dist/awsm-macos.zip
 
       - uses: actions/upload-artifact@v4
         with:
           name: awsm-macos
-          path: dist/awsm-macos-*.zip
+          path: dist/awsm-macos.zip
           if-no-files-found: error
 
       - name: Publish the release
@@ -146,14 +158,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/awsm-macos-*.zip \
+          gh release create "$GITHUB_REF_NAME" dist/awsm-macos.zip \
             --title "$GITHUB_REF_NAME" \
             --generate-notes \
             --notes-file - <<'NOTES'
-          Two downloads: `arm64` for Apple silicon, `amd64` for Intel. `uname -m`
-          says which this Mac is — `arm64` or `x86_64`.
+          One download for every Mac: the bundle is universal and carries both
+          Apple silicon and Intel.
 
-          Both are signed ad-hoc, which is enough to run and not enough for
+          It is signed ad-hoc, which is enough to run and not enough for
           Gatekeeper to let it through on another machine. On first launch:
           right click the app and choose **Open**, or run
 
