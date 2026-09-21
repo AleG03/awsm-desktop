@@ -386,6 +386,16 @@ func (c *Client) Clear(ctx context.Context) error {
 	return err
 }
 
+// ClearIfActive makes the comparison in the CLI, under its credentials lock.
+// Older CLIs must fail on the unsupported flag rather than clear unconditionally.
+func (c *Client) ClearIfActive(ctx context.Context, profile string) error {
+	if profile == "" {
+		return errors.New("no profile selected")
+	}
+	_, err := c.run(ctx, "clear", "--if-profile", profile)
+	return err
+}
+
 // Browser selects where the console opens.
 type Browser string
 
@@ -430,9 +440,12 @@ type Identity struct {
 	CallError string `json:"caller_id_error"`
 }
 
-// Whoami verifies the active credentials against STS.
-func (c *Client) Whoami(ctx context.Context) (Identity, error) {
-	out, err := c.run(ctx, "whoami", "--json")
+// Whoami verifies the explicitly selected profile against STS.
+func (c *Client) Whoami(ctx context.Context, profile string) (Identity, error) {
+	if profile == "" {
+		return Identity{}, errors.New("no profile selected")
+	}
+	out, err := c.run(ctx, "whoami", "--json", "--profile", profile)
 	if err != nil {
 		return Identity{}, err
 	}
@@ -459,7 +472,7 @@ func (c *Client) SSOLogin(ctx context.Context, session string) error {
 // reading the declaration without checking where it is attached produces a
 // command awsm does not have.
 func (c *Client) SetRegion(ctx context.Context, profile, region string) error {
-	_, err := c.run(ctx, "profile", "change-default-region", profile, region)
+	_, err := c.run(ctx, "profile", "change-default-region", profile, region, "--sync-active")
 	return err
 }
 

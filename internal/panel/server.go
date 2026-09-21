@@ -71,8 +71,10 @@ type Server struct {
 	// time: the panel dims itself while an action runs, and a second action
 	// arriving from the context menu should replace the first rather than
 	// leave two writers on ~/.aws/credentials.
-	mu      sync.Mutex
-	running *inFlight
+	mu         sync.Mutex
+	running    *inFlight
+	consoles   map[string]*inFlight
+	settingsMu sync.Mutex
 
 	// static serves the page itself. It is replaceable because the desktop
 	// framework has its own file server that also answers /wails/runtime.js,
@@ -149,19 +151,20 @@ var ErrCancelled = errors.New("cancelled")
 // that merely takes a while -- opening a console, above all -- stays out of
 // here: cancelling a sign-in because somebody looked at another account was
 // worse than any race it was protecting against.
-func (s *Server) startLong(doing string) (context.Context, func()) {
+func (s *Server) startLong(doing, id string) (context.Context, func()) {
 	ctx, cancel := context.WithCancel(context.Background())
-	operation := &inFlight{cancel: cancel}
+	operation := &inFlight{cancel: cancel, id: id, finished: make(chan struct{})}
 
 	s.mu.Lock()
 	previous := s.running
 	s.running = operation
+	s.notifyBusy(doing)
 	s.mu.Unlock()
 
 	if previous != nil {
 		previous.cancel()
+		<-previous.finished
 	}
-	s.notifyBusy(doing)
 
 	return ctx, func() {
 		s.mu.Lock()
@@ -171,23 +174,19 @@ func (s *Server) startLong(doing string) (context.Context, func()) {
 		current := s.running == operation
 		if current {
 			s.running = nil
-		}
-		s.mu.Unlock()
-
-		cancel()
-
-		// Only the operation still being waited on may say the waiting is over.
-		// A superseded one announcing idle would take the panel's hold off, and
-		// wipe the status bar, while its replacement was still running.
-		if current {
 			s.notifyBusy("")
 		}
+		s.mu.Unlock()
+		cancel()
+		close(operation.finished)
 	}
 }
 
 // inFlight is one long operation, identified by the address of this value.
 type inFlight struct {
-	cancel context.CancelFunc
+	cancel   context.CancelFunc
+	id       string
+	finished chan struct{}
 }
 
 // Cancel stops whatever long operation is running, and reports whether there
@@ -421,8 +420,10 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 // It takes no context. A switch onto a lapsed SSO session becomes a browser
 // sign-in that waits for whoever is at the keyboard, which has to outlive the
 // request that asked for it.
-func (s *Server) Switch(name string) error {
-	ctx, done := s.startLong("Switching…")
+func (s *Server) Switch(name string) error { return s.switchProfile(name, "") }
+
+func (s *Server) switchProfile(name, id string) error {
+	ctx, done := s.startLong("Switching…", id)
 	defer done()
 
 	if err := s.client.SetProfile(ctx, name); err != nil {
@@ -437,20 +438,49 @@ func (s *Server) Switch(name string) error {
 // Not activating it is the point: looking at an account is not the same as
 // working in it, and the old panel could do this before a redesign took it
 // away.
-func (s *Server) Console(name, browser string) error {
-	// Deliberately not registered as the operation being waited on, and so not
-	// cancelling one. Opening a console writes no credentials and dismisses the
-	// panel rather than holding it open -- and registering it meant that
-	// looking at another account while a sign-in was in progress killed the
-	// sign-in, which reported itself as "Cancelled" by somebody who had
-	// cancelled nothing.
-	//
-	// It still gets the long bound from the client: resolving another profile's
-	// credentials can need a sign-in of its own.
+func (s *Server) Console(name, browser string) error { return s.console(name, browser, "") }
+
+// Console operations have their own cancellation IDs. They never replace a
+// profile switch or hold the native window open after it loses focus.
+func (s *Server) console(name, browser, id string) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if id != "" {
+		op := &inFlight{cancel: cancel, id: id}
+		s.mu.Lock()
+		if s.consoles == nil {
+			s.consoles = make(map[string]*inFlight)
+		}
+		if _, exists := s.consoles[id]; exists {
+			s.mu.Unlock()
+			return errors.New("operation already running")
+		}
+		s.consoles[id] = op
+		s.mu.Unlock()
+		defer func() { s.mu.Lock(); delete(s.consoles, id); s.mu.Unlock() }()
+	}
 	if browser == "" {
 		browser = settings.Load().Browser
 	}
-	return s.client.Console(context.Background(), name, awsm.Browser(browser))
+	return cancelled(ctx, s.client.Console(ctx, name, awsm.Browser(browser)))
+}
+
+// CancelOperation only stops the operation named by the requesting page.
+func (s *Server) CancelOperation(id string) bool {
+	if id == "" {
+		return s.Cancel()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	op := s.consoles[id]
+	if s.running != nil && s.running.id == id {
+		op = s.running
+	}
+	if op == nil {
+		return false
+	}
+	op.cancel()
+	return true
 }
 
 // Terminal hands the profile switch to a terminal, for the MFA case.
@@ -464,10 +494,9 @@ func (s *Server) Terminal(name string) error {
 // ClearIfActive lets go of the active profile, if it is still the one asked
 // about.
 //
-// awsm clear takes no argument: it clears whatever is set. The name is checked
-// because a context menu can be opened on a header the panel has since
-// redrawn, and clearing a profile the user is no longer looking at is not what
-// they clicked.
+// The early check gives a useful error for a stale menu. The CLI checks again
+// under its credentials lock, so another process cannot switch profiles between
+// that check and the actual clear.
 func (s *Server) ClearIfActive(ctx context.Context, name string) error {
 	status, err := s.client.Status(ctx)
 	if err != nil {
@@ -476,7 +505,7 @@ func (s *Server) ClearIfActive(ctx context.Context, name string) error {
 	if status.Profile != name {
 		return fmt.Errorf("%s is no longer the active profile", name)
 	}
-	if err := s.client.Clear(ctx); err != nil {
+	if err := s.client.ClearIfActive(ctx, name); err != nil {
 		return err
 	}
 	s.notifyChanged()
@@ -532,12 +561,13 @@ func (s *Server) NeedsMFA(ctx context.Context, name string) bool {
 
 func (s *Server) handleSetProfile(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name string `json:"name"`
+		Name        string `json:"name"`
+		OperationID string `json:"operationId"`
 	}
 	if !decode(w, r, &body) {
 		return
 	}
-	if err := s.Switch(body.Name); err != nil {
+	if err := s.switchProfile(body.Name, body.OperationID); err != nil {
 		s.report(w, err)
 		return
 	}
@@ -546,13 +576,14 @@ func (s *Server) handleSetProfile(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleConsole(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Profile string `json:"profile"`
-		Browser string `json:"browser"`
+		Profile     string `json:"profile"`
+		Browser     string `json:"browser"`
+		OperationID string `json:"operationId"`
 	}
 	if !decode(w, r, &body) {
 		return
 	}
-	if err := s.Console(body.Profile, body.Browser); err != nil {
+	if err := s.console(body.Profile, body.Browser, body.OperationID); err != nil {
 		s.report(w, err)
 		return
 	}
@@ -560,7 +591,13 @@ func (s *Server) handleConsole(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleClear(w http.ResponseWriter, r *http.Request) {
-	if err := s.client.Clear(r.Context()); err != nil {
+	var body struct {
+		Profile string `json:"profile"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	if err := s.client.ClearIfActive(r.Context(), body.Profile); err != nil {
 		s.fail(w, err)
 		return
 	}
@@ -574,7 +611,13 @@ func (s *Server) handleWhoami(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	identity, err := s.client.Whoami(ctx)
+	var body struct {
+		Profile string `json:"profile"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	identity, err := s.client.Whoami(ctx, body.Profile)
 	if err != nil {
 		s.fail(w, err)
 		return
@@ -584,7 +627,8 @@ func (s *Server) handleWhoami(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSSOLogin(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Session string `json:"session"`
+		Session     string `json:"session"`
+		OperationID string `json:"operationId"`
 	}
 	if !decode(w, r, &body) {
 		return
@@ -592,7 +636,7 @@ func (s *Server) handleSSOLogin(w http.ResponseWriter, r *http.Request) {
 	// awsm opens the browser itself and waits for the flow, so this needs no
 	// terminal and can be an ordinary button -- and for the same reason it
 	// holds the panel open and is cancellable.
-	ctx, done := s.startLong("Signing in…")
+	ctx, done := s.startLong("Signing in…", body.OperationID)
 	defer done()
 
 	if err := s.client.SSOLogin(ctx, body.Session); err != nil {
@@ -687,7 +731,13 @@ type preferences struct {
 	Binary       string `json:"binary"`
 }
 
-func (s *Server) handleReadSettings(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleReadSettings(w http.ResponseWriter, r *http.Request) {
+	s.settingsMu.Lock()
+	defer s.settingsMu.Unlock()
+	s.readSettings(w, r)
+}
+
+func (s *Server) readSettings(w http.ResponseWriter, _ *http.Request) {
 	stored := settings.Load()
 	path, _ := settings.Path()
 	logPath, _ := logs.Path()
@@ -775,11 +825,14 @@ func (s *Server) handleOpenRelease(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleWriteSettings(w http.ResponseWriter, r *http.Request) {
+	s.settingsMu.Lock()
+	defer s.settingsMu.Unlock()
 	var body preferences
 	if !decode(w, r, &body) {
 		return
 	}
 
+	previous := settings.Load()
 	stored := settings.Settings{Shortcut: body.Shortcut, Browser: body.Browser, Theme: body.Theme}
 
 	// Applied before saving, and not saved if the system refuses it. This used
@@ -796,6 +849,9 @@ func (s *Server) handleWriteSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := settings.Save(stored); err != nil {
+		if s.applySettings != nil {
+			err = errors.Join(err, s.applySettings(previous))
+		}
 		s.fail(w, err)
 		return
 	}
@@ -807,7 +863,7 @@ func (s *Server) handleWriteSettings(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.handleReadSettings(w, r)
+	s.readSettings(w, r)
 }
 
 func (s *Server) handleCopy(w http.ResponseWriter, r *http.Request) {
@@ -829,8 +885,14 @@ func (s *Server) handleCopy(w http.ResponseWriter, r *http.Request) {
 // The long bound on those commands is ten minutes, which is a backstop against
 // a wedged process rather than something anyone should sit through. This is the
 // way out.
-func (s *Server) handleCancel(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]bool{"cancelled": s.Cancel()})
+func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		OperationID string `json:"operationId"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"cancelled": s.CancelOperation(body.OperationID)})
 }
 
 func (s *Server) handleHide(w http.ResponseWriter, _ *http.Request) {

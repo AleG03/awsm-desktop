@@ -1,7 +1,9 @@
 package awsm
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -71,7 +73,9 @@ func TestEveryFlagThePanelUsesExists(t *testing.T) {
 		{[]string{"profile", "list"}, []string{"-j"}},
 		{[]string{"prompt"}, []string{"--no-color", "--empty-on-none", "--format"}},
 		{[]string{"console"}, []string{"--firefox-container", "--zen-container", "--profile"}},
-		{[]string{"whoami"}, []string{"--json"}},
+		{[]string{"whoami"}, []string{"--json", "--profile"}},
+		{[]string{"clear"}, []string{"--if-profile"}},
+		{[]string{"profile", "change-default-region"}, []string{"--sync-active"}},
 	}
 
 	for _, c := range cases {
@@ -133,5 +137,46 @@ func TestTheDaemonStatusStillSaysWhatItsStateIs(t *testing.T) {
 	status := client.Daemon(t.Context())
 	if !status.Known {
 		t.Error("could not read a state out of `awsm daemon status`: the output format changed")
+	}
+}
+
+// Exercise the new cross-repository contract on disposable files, without AWS.
+func TestDesktopMutationsWithTheRealCLI(t *testing.T) {
+	client := realAwsm(t)
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	config := filepath.Join(dir, "config")
+	credentials := filepath.Join(dir, "credentials")
+	t.Setenv("AWS_CONFIG_FILE", config)
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", credentials)
+	if err := os.WriteFile(config, []byte("[profile work]\nregion = eu-west-1\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(credentials, []byte("[default]\naws_access_key_id = FAKE\naws_secret_access_key = fake\nregion = eu-west-1\n# source_profile = work\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.SetRegion(t.Context(), "work", "us-east-1"); err != nil {
+		t.Fatal(err)
+	}
+	status, err := client.Status(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Profile != "work" || status.Region != "us-east-1" {
+		t.Fatalf("active copy was not updated: %+v", status)
+	}
+	if err := client.ClearIfActive(t.Context(), "other"); err == nil {
+		t.Fatal("cleared the wrong profile")
+	}
+	status, err = client.Status(t.Context())
+	if err != nil || status.Profile != "work" {
+		t.Fatalf("mismatched clear changed active profile: %+v, %v", status, err)
+	}
+	if err := client.ClearIfActive(t.Context(), "work"); err != nil {
+		t.Fatal(err)
+	}
+	status, err = client.Status(t.Context())
+	if err != nil || status.Active() {
+		t.Fatalf("profile not cleared: %+v, %v", status, err)
 	}
 }

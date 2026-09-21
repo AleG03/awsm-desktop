@@ -17,6 +17,7 @@ const ui = {
   dot: el("dot"),
   current: el("current"),
   currentName: el("currentName"),
+  currentStatus: el("currentStatus"),
   currentMeta: el("currentMeta"),
   notice: el("notice"),
   expanded: el("expanded"),
@@ -57,6 +58,13 @@ let prefs = {};
 let rows = [];
 let selected = 0;
 let recording = false;
+let stateRequest = 0;
+let activeAction = null;
+let reloadAfterAction = false;
+let identityRequest = 0;
+let settingsQueue = Promise.resolve();
+let pendingSettings = 0;
+let settingsRequest = 0;
 
 // --- talking to Go ---------------------------------------------------------
 
@@ -162,6 +170,7 @@ function render() {
     empty.className = "empty";
     empty.textContent = state.profiles.length ? "No match." : "No profiles found.";
     ui.list.append(empty);
+    ui.search.removeAttribute("aria-activedescendant");
     updateFooter(0);
     return;
   }
@@ -220,6 +229,9 @@ function appendGroup(title, profiles) {
 function buildRow(profile) {
   const row = document.createElement("div");
   row.className = "row";
+  row.id = `profile-${rows.length}`;
+  row.setAttribute("role", "option");
+  row.setAttribute("aria-label", [profile.name, profile.name === state.profile && "Active", profile.sso_session, profile.region].filter(Boolean).join(" · "));
   row.title = [profile.name, profile.sso_session, profile.account_id, profile.type]
     .filter(Boolean)
     .join(" · ");
@@ -227,7 +239,7 @@ function buildRow(profile) {
   const name = document.createElement("div");
   name.className = "row-name";
   name.textContent = profile.name;
-  if (profile.is_active) name.append(badge("active"));
+  if (profile.name === state.profile) name.append(badge("Active"));
   if (profile.mfa_serial) {
     // Switching to this one cannot happen in the panel, so say so before the
     // click rather than after it.
@@ -278,13 +290,17 @@ function badge(text) {
 }
 
 function markSelected() {
-  rows.forEach((row, index) => row.element.classList.toggle("selected", index === selected));
+  rows.forEach((row, index) => {
+    row.element.classList.toggle("selected", index === selected);
+    row.element.setAttribute("aria-selected", String(index === selected));
+  });
+  if (rows[selected]) ui.search.setAttribute("aria-activedescendant", rows[selected].element.id);
   rows[selected]?.element.scrollIntoView({ block: "nearest" });
 }
 
 const current = () => rows[selected]?.profile;
 
-const KEY_HINT = "↵ switch · ⌘↵ console · ⌘C copy · right click for more";
+const KEY_HINT = "↵ Switch · ⌘↵ Console · Right click for more";
 
 function updateFooter(shown) {
   clearTimeout(hintTimer);
@@ -327,7 +343,9 @@ function renderCurrent() {
     : "Pick a profile below to switch to it";
 
   ui.dot.className = "dot";
-  if (active) ui.dot.classList.add(state.blocked ? "warn" : "on");
+  if (active) ui.dot.classList.add(state.blocked || expiringSoon(state.ttl) ? "warn" : "on");
+  ui.current.setAttribute("aria-expanded", String(!ui.expanded.hidden && active));
+  ui.currentStatus.textContent = active ? (state.blocked || expiringSoon(state.ttl) ? "Needs attention" : "Active profile") : "No active session";
   if (!active) setExpanded(false);
 
   // Everything below the header is about the active profile, so everything
@@ -342,6 +360,11 @@ function renderCurrent() {
 }
 
 function renderNotice() {
+  if (activeAction?.doing) {
+    const suffix = activeAction.slow ? "… waiting for awsm. Complete any browser sign-in, or cancel." : "…";
+    showProgress(activeAction.doing + suffix, activeAction.stoppable);
+    return;
+  }
   ui.notice.replaceChildren();
 
   if (state.error) {
@@ -380,7 +403,7 @@ function renderNotice() {
     if (name) {
       ui.notice.append(
         noticeButton("Log in", () =>
-          run(() => post("/api/sso/login", { session: name }), {
+          run((operationId) => post("/api/sso/login", { session: name, operationId }), {
             doing: `Signing in to ${name}`,
             stoppable: true,
           }),
@@ -414,6 +437,7 @@ function noticeButton(label, onClick) {
 
 function setExpanded(open) {
   ui.expanded.hidden = !open;
+  ui.current.setAttribute("aria-expanded", String(open));
   if (open) fillRegions();
 }
 
@@ -455,7 +479,9 @@ async function fillRegions() {
 let identityFor = null;
 
 function clearIdentity() {
+  identityRequest++;
   identityFor = null;
+  ui.identityButton.disabled = false;
   ui.identityText.textContent = "";
   ui.identityButton.textContent = "Check";
 }
@@ -475,28 +501,23 @@ function refreshIdentity() {
 
 async function loadIdentity() {
   const asked = state.profile;
+  if (!asked) return;
+  const request = ++identityRequest;
+  identityFor = asked;
+  ui.identityButton.disabled = true;
   ui.identityText.textContent = "Asking AWS…";
-
   try {
-    // This one calls STS, about half a second against five milliseconds for
-    // everything else, so it is never part of opening the panel.
-    const id = await post("/api/whoami");
-
-    // The profile can change while STS is answering, and the answer would then
-    // be about an account nobody asked about.
-    if (state.profile !== asked) return;
-
-    identityFor = asked;
-    // Deliberately not the expiry: the header already shows a countdown, and
-    // this one is measured differently, so two disagreeing times would sit on
-    // the same panel.
+    const id = await post("/api/whoami", { profile: asked });
+    if (request !== identityRequest || state.profile !== asked) return;
+    if (id.profile !== asked) throw new Error("The profile changed. Check again.");
     ui.identityText.textContent = [id.account && `Account ${id.account}`, id.arn, id.caller_id_error]
-      .filter(Boolean)
-      .join(" · ");
+      .filter(Boolean).join(" · ");
     ui.identityButton.textContent = "Check again";
   } catch (error) {
-    if (state.profile !== asked) return;
+    if (request !== identityRequest || state.profile !== asked) return;
     ui.identityText.textContent = String(error.message || error);
+  } finally {
+    if (request === identityRequest) ui.identityButton.disabled = false;
   }
 }
 
@@ -510,36 +531,50 @@ async function loadIdentity() {
 // nothing -- which is exactly how it was read.
 const SLOW = 2000;
 
+// getRandomValues also works in the desktop webview's custom URL scheme;
+// randomUUID is restricted to secure contexts in some WebKit versions.
+function operationID() {
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, "0")).join("");
+}
+
 // run performs an action, saying what it is doing while it runs and turning any
 // failure into a message rather than a silence.
 async function run(action, { refresh = true, doing = "", stoppable = false } = {}) {
+  if (activeAction) return;
+  const operation = { id: operationID(), doing, stoppable, slow: false, cancelling: false };
+  activeAction = operation;
+  ++stateRequest; // Responses requested before this action cannot restore old state.
   document.body.classList.add("busy");
-  if (doing) showProgress(`${doing}…`, stoppable);
-
-  const explain = doing
-    ? setTimeout(() => {
-        showProgress(`${doing}… awsm may have opened a browser for you to sign in.`, stoppable);
-      }, SLOW)
-    : undefined;
-
-  // Go answers a stopped command with this rather than with an error: being
-  // cancelled is an outcome, not a failure.
-  let stopped = false;
-
-  try {
-    const result = await action();
-    if (refresh) await load();
-    stopped = Boolean(result && result.cancelled);
-  } catch (error) {
-    state.error = String(error.message || error);
+  ui.list.setAttribute("aria-busy", "true");
+  renderNotice();
+  const explain = doing ? setTimeout(() => {
+    if (activeAction !== operation) return;
+    operation.slow = true;
     renderNotice();
+  }, SLOW) : undefined;
+  let stopped = false;
+  let failure = "";
+  try {
+    const result = await action(operation.id);
+    stopped = Boolean(result?.cancelled);
+  } catch (error) {
+    failure = String(error.message || error);
   } finally {
+    if (refresh || reloadAfterAction) {
+      try {
+        do {
+          reloadAfterAction = false;
+          await load({ duringAction: true });
+        } while (reloadAfterAction);
+      } catch (error) { failure ||= String(error.message || error); }
+    }
+    if (failure) state.error = failure;
     clearTimeout(explain);
+    activeAction = null;
+    reloadAfterAction = false;
     document.body.classList.remove("busy");
-    // Anything that finished without reloading has to clear its own message;
-    // load() repaints the notice by itself.
-    if (doing && !refresh) renderNotice();
-    // Last, so neither of the two lines above wipes it.
+    ui.list.setAttribute("aria-busy", "false");
+    renderNotice();
     if (stopped) flash("Cancelled.");
   }
 }
@@ -552,7 +587,11 @@ async function run(action, { refresh = true, doing = "", stoppable = false } = {
 // a button that does nothing, which is worse than no button.
 function showProgress(message, stoppable = false) {
   ui.notice.replaceChildren(noticeText(message));
-  if (stoppable) ui.notice.append(noticeButton("Cancel", cancelRunning));
+  if (stoppable) {
+    const button = noticeButton(activeAction?.cancelling ? "Cancelling…" : "Cancel", cancelRunning);
+    button.disabled = Boolean(activeAction?.cancelling);
+    ui.notice.append(button);
+  }
   ui.notice.className = "notice progress";
   ui.notice.hidden = false;
 }
@@ -561,6 +600,7 @@ function showProgress(message, stoppable = false) {
 // was showing.
 let flashTimer;
 function flash(message) {
+  if (activeAction) return;
   ui.notice.replaceChildren(noticeText(message));
   ui.notice.className = "notice progress";
   ui.notice.hidden = false;
@@ -568,8 +608,24 @@ function flash(message) {
   flashTimer = setTimeout(renderNotice, 2500);
 }
 
-function cancelRunning() {
-  post("/api/cancel").catch(() => {});
+async function cancelRunning() {
+  const operation = activeAction;
+  if (!operation?.stoppable || operation.cancelling) return;
+  operation.cancelling = true;
+  renderNotice();
+  try {
+    const result = await post("/api/cancel", { operationId: operation.id });
+    if (!result.cancelled && activeAction === operation) {
+      operation.cancelling = false;
+      renderNotice();
+    }
+  }
+  catch (error) {
+    if (activeAction !== operation) return;
+    operation.cancelling = false;
+    operation.doing = `Could not cancel: ${error.message || error}`;
+    renderNotice();
+  }
 }
 
 function activate(profile) {
@@ -579,8 +635,8 @@ function activate(profile) {
     return;
   }
   run(
-    async () => {
-      const result = await post("/api/profile/set", { name: profile.name });
+    async (operationId) => {
+      const result = await post("/api/profile/set", { name: profile.name, operationId });
       // A switch that was stopped halfway is not one worth offering again at
       // the top of the list.
       if (!result.cancelled) rememberRecent(profile.name);
@@ -603,14 +659,15 @@ function toTerminal(name) {
 function openConsole(profile, browser) {
   if (!profile) return;
   run(
-    async () => {
+    async (operationId) => {
       // An empty browser means "whatever the settings say", which keeps the
       // preference in one place instead of two.
       const result = await post("/api/console", {
         profile: profile.name,
         browser: browser ?? "",
+        operationId,
       });
-      dismiss();
+      if (!result.cancelled) dismiss();
       return result;
     },
     { refresh: false, doing: `Opening the console for ${profile.name}`, stoppable: true },
@@ -633,12 +690,33 @@ async function copy(text, what) {
   }
 }
 
-async function load() {
-  state = await get("/api/state");
-  state.profiles = state.profiles || [];
-  applyTheme(state.theme);
+async function load({ duringAction = false } = {}) {
+  if (activeAction && !duringAction) { reloadAfterAction = true; return; }
+  const request = ++stateRequest;
+  let next;
+  try { next = await get("/api/state"); }
+  catch (error) { if (request !== stateRequest) return; throw error; }
+  if (request !== stateRequest) return;
+  // Keep the selected profile stable when the list changes under the pointer.
+  const selectedName = current()?.name;
+  state = { ...next, profiles: next.profiles || [] };
+  applyTheme(pendingSettings ? prefs.theme : state.theme);
   renderCurrent();
   render();
+  if (selectedName) {
+    const index = rows.findIndex(row => row.profile.name === selectedName);
+    if (index >= 0) { selected = index; markSelected(); }
+  }
+}
+
+function expiringSoon(ttl) {
+  if (ttl === "expired" || ttl === "0s") return true;
+  if (!ttl || ttl === "static") return false;
+  let seconds = 0;
+  for (const [, amount, unit] of ttl.matchAll(/(\d+(?:\.\d+)?)(h|m|s)/g)) {
+    seconds += Number(amount) * ({ h: 3600, m: 60, s: 1 }[unit]);
+  }
+  return seconds > 0 && seconds < 600;
 }
 
 // --- settings --------------------------------------------------------------
@@ -659,9 +737,14 @@ function showSettings(open) {
 }
 
 async function loadSettings() {
+  if (pendingSettings) return;
+  const request = ++settingsRequest;
   try {
-    prefs = await get("/api/settings");
+    const next = await get("/api/settings");
+    if (request !== settingsRequest) return;
+    prefs = next;
   } catch (error) {
+    if (request !== settingsRequest) return;
     ui.settingsHint.textContent = String(error.message || error);
     return;
   }
@@ -710,8 +793,7 @@ function enableRenewal() {
 
 // The note under the Version row, restored when a check starts again.
 const VERSION_NOTE =
-  "Asks GitHub whether a newer release exists. It only looks: nothing is " +
-  "downloaded and nothing here is replaced.";
+  "Check for a newer release. Updates are installed manually.";
 
 function checkForUpdate() {
   ui.versionCheck.disabled = true;
@@ -814,33 +896,38 @@ function captureShortcut(event) {
   stopRecording();
 }
 
-async function saveSettings(changes) {
-  const next = {
-    shortcut: prefs.shortcut || "",
-    browser: prefs.browser || "default",
-    theme: prefs.theme || "system",
-    openAtLogin: Boolean(prefs.openAtLogin),
-    ...changes,
-  };
-  // Applied before the round trip so the panel repaints at once; the reload
-  // below puts it back if the write failed.
-  if (changes.theme) applyTheme(changes.theme);
+function saveSettings(changes) {
+  settingsRequest++;
+  pendingSettings++;
+  ui.settingsHint.textContent = "Saving…";
+  // Build the next payload only after the preceding save has settled. Rapid
+  // changes are merged into the last confirmed preferences, never a stale copy.
+  settingsQueue = settingsQueue.then(async () => {
+    const next = {
+      shortcut: prefs.shortcut || "", browser: prefs.browser || "default",
+      theme: prefs.theme || "system", openAtLogin: Boolean(prefs.openAtLogin), ...changes,
+    };
+    try {
+      prefs = await post("/api/settings", next);
+      ui.settingsHint.textContent = "Saved";
+    } catch (error) {
+      ui.settingsHint.textContent = String(error.message || error);
+      try { prefs = await get("/api/settings"); } catch { /* Keep last confirmed preferences. */ }
+    } finally {
+      pendingSettings--;
+      applyTheme(prefs.theme);
+      ui.themeSelect.value = prefs.theme || "system";
+      ui.browserSelect.value = prefs.browser || "default";
+      ui.loginCheckbox.checked = Boolean(prefs.openAtLogin);
+      renderShortcut();
+    }
+  });
+  return settingsQueue;
+}
 
-  try {
-    prefs = await post("/api/settings", next);
-    ui.settingsHint.textContent = "";
-  } catch (error) {
-    ui.settingsHint.textContent = String(error.message || error);
-    // The system refused it, so show what is actually in force rather than
-    // what was asked for.
-    await loadSettings();
-    return;
-  }
-  applyTheme(prefs.theme);
-  ui.themeSelect.value = prefs.theme || "system";
-  ui.browserSelect.value = prefs.browser || "default";
-  ui.loginCheckbox.checked = Boolean(prefs.openAtLogin);
-  renderShortcut();
+function clearActive() {
+  const profile = state.profile;
+  if (profile) return run(() => post("/api/clear", { profile }), { doing: "Clearing the active profile" });
 }
 
 // --- keyboard --------------------------------------------------------------
@@ -866,9 +953,10 @@ document.addEventListener("keydown", (event) => {
   // for. Escape still works, because getting the panel out of the way is not
   // an action on a profile.
   if (document.body.classList.contains("busy") && event.key !== "Escape") {
-    event.preventDefault();
+    if (event.key !== "Tab" && !event.target.closest?.("#notice button")) event.preventDefault();
     return;
   }
+  if (event.key !== "Escape" && event.target.closest?.("button, select, input:not(#search), textarea")) return;
 
   switch (event.key) {
     case "ArrowDown":
@@ -891,6 +979,7 @@ document.addEventListener("keydown", (event) => {
       return;
   }
 
+  if (event.target.closest?.("button, select, input:not(#search), textarea")) return;
   const profile = current();
   const command = event.metaKey || event.ctrlKey;
 
@@ -899,7 +988,7 @@ document.addEventListener("keydown", (event) => {
   if (command && event.key.toLowerCase() === "k") {
     event.preventDefault();
     if (state.profile) {
-      run(() => post("/api/clear"), { doing: "Clearing the active profile" });
+      clearActive();
     }
     return;
   }
@@ -957,7 +1046,7 @@ ui.current.addEventListener("click", () => {
 });
 ui.identityButton.addEventListener("click", loadIdentity);
 ui.clearButton.addEventListener("click", () =>
-  run(() => post("/api/clear"), { doing: "Clearing the active profile" }),
+  clearActive(),
 );
 ui.regionSelect.addEventListener("change", () => {
   const region = ui.regionSelect.value;
@@ -1002,7 +1091,7 @@ function watchForChanges() {
   events.On("awsm:session-changed", () => {
     // An action started here reloads itself when it finishes. Reloading now as
     // well would wipe the progress message it is in the middle of showing.
-    if (document.body.classList.contains("busy")) return;
+    if (activeAction) { reloadAfterAction = true; return; }
     load().catch(() => {});
   });
 }

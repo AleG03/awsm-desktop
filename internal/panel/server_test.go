@@ -160,7 +160,7 @@ func TestActionsThatChangeTheSessionNotifyTheStatusBar(t *testing.T) {
 	// seconds after the click that caused the change.
 	cases := map[string]struct{ path, body string }{
 		"set profile": {"/api/profile/set", `{"name":"work"}`},
-		"clear":       {"/api/clear", `{}`},
+		"clear":       {"/api/clear", `{"profile":"work"}`},
 		"sso login":   {"/api/sso/login", `{"session":"acme"}`},
 		"set region":  {"/api/region", `{"profile":"work","region":"eu-west-1"}`},
 	}

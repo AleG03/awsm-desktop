@@ -15,7 +15,10 @@ asks it and draws the answer.
 ## Requirements
 
 - `awsm` on the machine. `/usr/local/bin` and `/opt/homebrew/bin` are checked
-  first, then `PATH`. Set `AWSM_BIN` to point somewhere else.
+  first, then `PATH`. Set `AWSM_BIN` to point somewhere else. This build requires
+  `clear --if-profile` and `profile change-default-region --sync-active` from
+  the matching CLI changes. Build/update **both repositories together**. Older
+  CLIs reject these actions; the panel never falls back to an unguarded clear.
 - The **AWS CLI** is *not* required. awsm signs in to SSO itself, over the OIDC
   device flow, and starts no `aws` at all. An awsm from before that change does
   shell out to it, and this application makes sure it can be found either way —
@@ -63,9 +66,8 @@ interface: edit, reload, and use the browser's developer tools.
 
 **Right clicking a profile** offers the same actions as a native menu, on the
 row under the pointer. **Right clicking the profile at the top** offers them for
-that one, plus clearing it — `awsm clear` takes no argument and lets go of
-whatever is set, so the panel checks that it is still the profile the menu was
-opened on before running it.
+that one, plus clearing it. The profile name goes to `awsm clear --if-profile`;
+awsm checks it under the credentials lock before clearing anything.
 
 Only ↵ on its own makes a profile active. Opening a console for an account is
 not the same as starting to work in it, and every other action leaves the
@@ -98,7 +100,15 @@ and an answer that arrives after the profile has changed is thrown away.
 
 The region picker keeps its list of regions across all this. That list is the
 same whatever profile is active, so it is fetched once; only the selected value
-follows the profile.
+follows the profile. Region changes update both the named profile and its active
+credentials copy under the same lock. If a different account has become active,
+its credentials are left alone.
+
+Identity checks pass `--profile` explicitly and discard replies for a different
+profile. Older state responses cannot overwrite a newer refresh. Progress and
+Cancel remain visible when returning from browser sign-in; each cancellation
+names its own operation, including console sign-ins. Settings changes are queued
+and merged with the last successful save.
 
 **Settings** is in the footer: a system-wide shortcut that opens the panel from
 anywhere, the theme, which browser the **Console** action opens in, whether
@@ -317,7 +327,7 @@ There is code for the others and there are reasons to think it works, which is
 not the same thing — nobody has started this on a Windows machine or a Linux
 one, including the people who wrote the code for them:
 
-- **Windows** — compiles, and is checked on every release build, but has never
+- **Windows** — compiles, and is checked on every CI build, but has never
   been run. Wails is pure Go there, so the binary is real rather than a stub;
   it would need the WebView2 runtime, which Windows 11 ships and Windows 10
   usually has through Edge. The tray shows no text at all, only an icon and a
@@ -350,10 +360,27 @@ endpoints through it cost nothing.
 
 ## Continuous integration
 
-[`.github/workflows/build.yml`](.github/workflows/build.yml) runs **only on a
-version tag**, and on a manual dispatch. It formats, vets and tests the code,
-then builds the bundle. Nothing watches ordinary commits, so `make test` before
-pushing is what catches a mistake before a tag does.
+[`.github/workflows/build.yml`](.github/workflows/build.yml) runs on pushes, pull
+requests, version tags and manual dispatches. It checks formatting, runs `go vet`,
+Go tests with the race detector, and the JavaScript behavior tests, then builds
+the bundle. Only version tags publish a release.
+
+`make test` needs Node.js 22+ for the dependency-free tests in `tests/`, and Go.
+The JavaScript tests execute the shipped script with controlled HTTP completion
+order, exercising stale responses, identity, cancellation, keyboard controls and
+queued settings. They do not replace visual checks in the webview.
+
+The CLI contract tests run when `awsm` is available. To test the two working
+copies together without installing either binary:
+
+```sh
+(cd ../awsm && go build -o /tmp/awsm-contract .)
+AWSM_BIN=/tmp/awsm-contract make test
+```
+
+These tests also exercise region synchronization and guarded clearing against
+the real CLI using disposable AWS files, without contacting AWS. CI skips the
+CLI contract tests when no `awsm` binary is installed.
 
 macOS is the only job: the bundle needs `codesign` and `iconutil`, and Wails
 links against the system frameworks, so there is nowhere else to build it.

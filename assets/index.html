@@ -12,14 +12,16 @@
          clutter. -->
     <section id="main" class="view">
       <header>
-        <button class="current" id="current" type="button">
+        <button class="current" id="current" type="button" aria-expanded="false" aria-controls="expanded">
           <span class="dot" id="dot"></span>
           <span class="current-text">
+            <span class="current-status" id="currentStatus">No active session</span>
             <span class="current-name" id="currentName">No profile</span>
             <span class="current-meta" id="currentMeta">Nothing is set</span>
           </span>
+          <span class="chevron" aria-hidden="true">⌄</span>
         </button>
-        <div class="notice" id="notice" hidden></div>
+        <div class="notice" id="notice" role="status" aria-live="polite" hidden></div>
         <div class="expanded" id="expanded" hidden>
           <label class="field">
             <span class="field-key">Region</span>
@@ -47,6 +49,7 @@
         <input
           type="search"
           id="search"
+          aria-label="Search profiles" aria-controls="list"
           placeholder="Search profiles, sessions, accounts"
           autocomplete="off"
           autocorrect="off"
@@ -54,7 +57,7 @@
         />
       </div>
 
-      <main id="list"></main>
+      <main id="list" role="listbox" aria-label="AWS profiles"></main>
 
       <footer>
         <!-- Actions are on the right click menu and on the keys listed here.
@@ -73,13 +76,13 @@
       </header>
 
       <main class="settings-body">
-        <label class="field">
-          <span class="field-key">Shortcut</span>
-          <button class="recorder" id="shortcutButton" type="button">
+        <div class="field">
+          <span class="field-key" id="shortcutLabel">Shortcut</span>
+          <button class="recorder" id="shortcutButton" type="button" aria-labelledby="shortcutLabel shortcutButton">
             Click and press keys
           </button>
           <button class="quiet" id="shortcutClear" type="button" hidden>Clear</button>
-        </label>
+        </div>
         <p class="field-note" id="shortcutNote">
           Opens the panel from anywhere. None is set until you choose one.
         </p>
@@ -93,9 +96,7 @@
           </select>
         </label>
         <p class="field-note">
-          Following the system keeps the panel translucent. Choosing a theme
-          gives it a solid background instead, because macOS fixes a window's
-          appearance when it opens.
+          Match your desktop, or choose a light or dark appearance.
         </p>
 
         <label class="field">
@@ -107,50 +108,46 @@
           </select>
         </label>
         <p class="field-note">
-          Where ⌘↵ and Open Console go. A Firefox container is always reachable
-          on its own, whatever this says.
+          Choose where AWS Console opens. Containers keep accounts separate.
         </p>
 
-        <label class="field">
+        <div class="field">
           <span class="field-key">Renewal</span>
           <span class="field-value">
             <span id="renewalState">—</span>
             <button class="quiet" id="renewalEnable" type="button" hidden>Enable</button>
           </span>
-        </label>
+        </div>
         <p class="field-note" id="renewalNote">
-          awsm can renew the active profile's credentials before they expire.
-          This panel only reports what it decided; the renewing is
-          <code>awsm daemon enable</code>.
+          Renew the active session automatically before its credentials expire.
         </p>
 
-        <label class="field">
+        <div class="field">
           <span class="field-key">Login</span>
           <span class="field-value">
             <input type="checkbox" id="loginCheckbox" />
             <label for="loginCheckbox">Open awsm at login</label>
           </span>
-        </label>
+        </div>
 
-        <label class="field">
+        <div class="field">
           <span class="field-key">Version</span>
           <span class="field-value">
             <span id="versionState">—</span>
             <button class="quiet" id="versionCheck" type="button">Check</button>
             <button class="quiet" id="versionOpen" type="button" hidden>Open release</button>
           </span>
-        </label>
+        </div>
         <p class="field-note" id="versionNote">
-          Asks GitHub whether a newer release exists. It only looks: nothing is
-          downloaded and nothing here is replaced.
+          Check for a newer release. Updates are installed manually.
         </p>
 
         <div class="keys">
-          <div class="keys-title">Keys</div>
+          <div class="keys-title">Keyboard shortcuts</div>
           <div><kbd>↵</kbd><span>Switch to the profile</span></div>
           <div><kbd>⌘↵</kbd><span>Open the console, without switching</span></div>
           <div><kbd>⌘⇧↵</kbd><span>Open it in a Firefox container</span></div>
-          <div><kbd>⌘F</kbd><span>The same, without reaching for ↵</span></div>
+          <div><kbd>⌘F</kbd><span>Open a Firefox container</span></div>
           <div><kbd>⌘C</kbd><span>Copy the account id</span></div>
           <div><kbd>⌘⇧C</kbd><span>Copy the profile name</span></div>
           <div><kbd>⌘T</kbd><span>Open a terminal on that profile</span></div>
@@ -159,9 +156,8 @@
         </div>
 
         <p class="field-note keys-note">
-          Right clicking a profile offers the same actions, on the row under the
-          pointer rather than the selected one. Right clicking the profile at the
-          top of the panel offers them for that one, plus clearing it.
+          Right click any profile for more actions. Right click the active
+          profile to clear its credentials.
         </p>
 
         <div class="paths">
@@ -172,7 +168,7 @@
       </main>
 
       <footer>
-        <span class="hint" id="settingsHint"></span>
+        <span class="hint" id="settingsHint" role="status"></span>
         <button class="quiet" id="quitButton" type="button">Quit</button>
       </footer>
     </section>

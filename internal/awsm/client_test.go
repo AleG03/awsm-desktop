@@ -383,3 +383,25 @@ func TestOnlyDirectoriesThatExistAreAdded(t *testing.T) {
 		t.Errorf("got %q, want the path unchanged", got)
 	}
 }
+
+func TestIdentityIsResolvedForTheRequestedProfile(t *testing.T) {
+	c := fakeAwsm(t, `[ "$1" = whoami ] && [ "$2" = --json ] && [ "$3" = --profile ] && [ "$4" = 'work account' ] || exit 1
+echo '{"profile":"work account","account":"123","arn":"fake-arn"}'`)
+	id, err := c.Whoami(t.Context(), "work account")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id.Profile != "work account" {
+		t.Fatalf("identity: %+v", id)
+	}
+	if _, err = c.Whoami(t.Context(), ""); err == nil {
+		t.Fatal("unscoped identity was accepted")
+	}
+}
+
+func TestRegionChangeRequestsAtomicActiveSynchronization(t *testing.T) {
+	c := fakeAwsm(t, `[ "$1" = profile ] && [ "$2" = change-default-region ] && [ "$3" = 'work account' ] && [ "$4" = eu-west-1 ] && [ "$5" = --sync-active ] || exit 1`)
+	if err := c.SetRegion(t.Context(), "work account", "eu-west-1"); err != nil {
+		t.Fatal(err)
+	}
+}

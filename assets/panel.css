@@ -13,8 +13,8 @@
   color-scheme: light;
 
   --text: #1d1d1f;
-  --dim: rgba(0, 0, 0, 0.55);
-  --faint: rgba(0, 0, 0, 0.34);
+  --dim: rgba(0, 0, 0, 0.66);
+  --faint: rgba(0, 0, 0, 0.60);
   --rule: rgba(0, 0, 0, 0.08);
   --hover: rgba(0, 0, 0, 0.05);
   --field: rgba(0, 0, 0, 0.05);
@@ -32,8 +32,8 @@
     color-scheme: dark;
 
     --text: #f5f5f7;
-    --dim: rgba(255, 255, 255, 0.58);
-    --faint: rgba(255, 255, 255, 0.36);
+    --dim: rgba(255, 255, 255, 0.74);
+    --faint: rgba(255, 255, 255, 0.65);
     --rule: rgba(255, 255, 255, 0.09);
     --hover: rgba(255, 255, 255, 0.07);
     --field: rgba(255, 255, 255, 0.075);
@@ -47,8 +47,8 @@
   color-scheme: dark;
 
   --text: #f5f5f7;
-  --dim: rgba(255, 255, 255, 0.58);
-  --faint: rgba(255, 255, 255, 0.36);
+  --dim: rgba(255, 255, 255, 0.74);
+  --faint: rgba(255, 255, 255, 0.65);
   --rule: rgba(255, 255, 255, 0.09);
   --hover: rgba(255, 255, 255, 0.07);
   --field: rgba(255, 255, 255, 0.075);
@@ -198,7 +198,7 @@ header {
 .current-meta {
   display: block;
   color: var(--dim);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .notice {
@@ -248,14 +248,14 @@ header {
 .field-key {
   flex: none;
   width: 62px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--dim);
 }
 
 .field-value {
   flex: 1;
   min-width: 0;
-  font-size: 11px;
+  font-size: 12px;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -267,7 +267,7 @@ header {
 
 .field-note {
   margin: 3px 0 14px 70px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
 }
 
@@ -283,7 +283,7 @@ header {
 #search {
   flex: 1;
   min-width: 0;
-  padding: 5px 10px;
+  padding: 8px 10px;
   border: none;
   border-radius: 7px;
   background: var(--field);
@@ -315,12 +315,12 @@ main {
      scroll-margin-top below can match it. The two have to agree: see there. */
   height: var(--group-height);
   box-sizing: border-box;
-  padding: 11px 14px 4px;
+  padding: 8px 14px 4px;
   position: sticky;
   top: 0;
   z-index: 1;
   background: var(--sheet);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -333,7 +333,8 @@ main {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 5px 8px;
+  padding: 7px 8px;
+  min-height: 36px;
   border-radius: 7px;
   /* The group headings are sticky, so they cover the top of the list. Without
      this, arrowing *upwards* scrolls the selected row to the very top of the
@@ -365,7 +366,7 @@ main {
   margin-left: 6px;
   padding: 0 5px;
   border-radius: 4px;
-  font-size: 10px;
+  font-size: 11px;
   background: var(--hover);
   color: var(--dim);
   white-space: nowrap;
@@ -378,14 +379,14 @@ main {
 
 .row-region {
   flex: none;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
   white-space: nowrap;
 }
 
 .row.selected .row-region {
   color: inherit;
-  opacity: 0.8;
+  opacity: 1;
 }
 
 .empty {
@@ -403,7 +404,7 @@ footer {
   gap: 4px;
   padding: 5px 8px;
   border-top: 1px solid var(--rule);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
 }
 
@@ -468,7 +469,7 @@ footer {
   border-top: 1px solid var(--rule);
   display: grid;
   gap: 5px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--dim);
 }
 
@@ -502,7 +503,7 @@ footer {
   border-top: 1px solid var(--rule);
   display: grid;
   gap: 4px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
 }
 
@@ -514,21 +515,42 @@ footer {
 
 .paths code {
   font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
-  font-size: 10px;
+  font-size: 11px;
   overflow-wrap: anywhere;
   user-select: text;
   -webkit-user-select: text;
 }
 
-.busy {
-  opacity: 0.55;
+/* Keep progress and its cancel button fully readable while work is pending. */
+.busy .current, .busy .expanded, .busy .filters, .busy #list, .busy footer {
   pointer-events: none;
 }
+.busy #list, .busy .filters { opacity: 0.6; }
 
-/* Except the way out. An action that waits on a browser sign-in can run for
-   minutes, and a dimmed panel with no reachable control would be a panel the
-   user has to quit. Opacity cannot be undone by a descendant; pointer-events
-   can, and that is the part that matters here. */
-.busy .notice {
-  pointer-events: auto;
+button:focus-visible, select:focus-visible, input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
+.current-status {
+  display: block;
+  color: var(--dim);
+  font-size: 11px;
+  font-weight: 500;
+  margin-bottom: 2px;
+}
+.current-name { font-size: 14px; line-height: 1.35; }
+.current-meta { margin-top: 3px; font-variant-numeric: tabular-nums; }
+.current .dot { margin-top: 22px; }
+.chevron { align-self: center; color: var(--dim); font-size: 16px; }
+.current[aria-expanded="true"] .chevron { transform: rotate(180deg); }
+.quiet { min-height: 28px; }
+.notice { overflow-wrap: anywhere; }
+.notice .quiet { color: var(--text); background: var(--hover); flex: none; }
+#identityText { min-width: 0; }
+#identityButton { flex: none; }
+.settings-body .field { min-height: 32px; }
+.settings-body .field-note { line-height: 1.5; }
+.settings-body select { flex: 1; min-width: 0; }
+#loginCheckbox { accent-color: var(--accent); }
+#clearButton { color: var(--warn); }
+footer .hint { font-size: 11px; }

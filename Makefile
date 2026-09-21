@@ -4,6 +4,7 @@ build:
 	MACOSX_DEPLOYMENT_TARGET=14.0 go build -o dist/awsm-desktop .
 
 test:
+	node --test tests/*.test.cjs
 	go test ./...
 
 # Serve the panel over HTTP so it can be opened in a browser with dev tools.
