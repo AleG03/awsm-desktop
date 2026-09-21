@@ -281,6 +281,12 @@ func main() {
 	// a template image and the system repaints it without being asked.
 	app.Event.OnApplicationEvent(events.Common.ThemeChanged, func(*application.ApplicationEvent) { announce() })
 
+	// Local file changes include logins and switches performed in a terminal.
+	// Stat polling is cheap and avoids launching the CLI while nothing changes.
+	go awsm.WatchStatusFiles(app.Context(), 500*time.Millisecond, func() {
+		announce()
+		app.Event.Emit(sessionChanged)
+	})
 	go followStatus(app, tray, server, log, refresh, &activity)
 
 	if err := app.Run(); err != nil {
@@ -520,11 +526,6 @@ func followStatus(app *application.App, tray *application.SystemTray, server *pa
 	defer ticker.Stop()
 
 	update := func() {
-		doing := ""
-		if current := activity.Load(); current != nil {
-			doing = *current
-		}
-
 		status, err := server.Status(context.Background())
 		if err != nil {
 			// Transient: the next tick tries again. Saying so every fifteen
@@ -532,6 +533,11 @@ func followStatus(app *application.App, tray *application.SystemTray, server *pa
 			log.Debug("could not read the status", "error", err)
 			return
 		}
+		doing := ""
+		if current := activity.Load(); current != nil {
+			doing = *current
+		}
+
 		tray.SetLabel(trayLabel(status, doing))
 		tray.SetTooltip(tooltip(status, doing))
 		updateIcon(tray, iconStatus(status))

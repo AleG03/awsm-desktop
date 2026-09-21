@@ -19,6 +19,8 @@ asks it and draws the answer.
   `clear --if-profile` and `profile change-default-region --sync-active` from
   the matching CLI changes. Build/update **both repositories together**. Older
   CLIs reject these actions; the panel never falls back to an unguarded clear.
+  The matching CLI also renews active credentials after `sso login` and exposes
+  the live `{blocked_reason}` status, so recovery does not wait for the daemon.
 - The **AWS CLI** is *not* required. awsm signs in to SSO itself, over the OIDC
   device flow, and starts no `aws` at all. An awsm from before that change does
   shell out to it, and this application makes sure it can be found either way —
@@ -109,6 +111,13 @@ profile. Older state responses cannot overwrite a newer refresh. Progress and
 Cancel remain visible when returning from browser sign-in; each cancellation
 names its own operation, including console sign-ins. Settings changes are queued
 and merged with the last successful save.
+
+A successful SSO login also renews the active profile when it uses that session.
+The login cannot restore an account switched or cleared while the browser was
+open. Panel and menu-bar warnings use the current token state rather than waiting
+for the daemon to remove an old warning. Local credentials, config and daemon
+file changes are detected every 500 ms; the CLI runs only when a file changes or
+on the 15-second countdown timer. This also picks up logins from a terminal.
 
 **Settings** is in the footer: a system-wide shortcut that opens the panel from
 anywhere, the theme, which browser the **Console** action opens in, whether
@@ -286,7 +295,7 @@ browser by itself.
 
 **Renew credentials on a schedule.** That is awsm's own refresh daemon
 (`awsm daemon enable`). Two writers on `~/.aws/credentials` would be a bug
-nobody could reproduce, so this panel only reads what the daemon decided and
+nobody could reproduce, so this panel reads the CLI's current status and
 shows it: the badged icon and a `⚠ MFA` or `⚠ SSO` in the menu bar, and a banner
 in the panel with the button that fixes it.
 
@@ -360,10 +369,12 @@ endpoints through it cost nothing.
 
 ## Continuous integration
 
-[`.github/workflows/build.yml`](.github/workflows/build.yml) runs on pushes, pull
-requests, version tags and manual dispatches. It checks formatting, runs `go vet`,
-Go tests with the race detector, and the JavaScript behavior tests, then builds
-the bundle. Only version tags publish a release.
+[`.github/workflows/build.yml`](.github/workflows/build.yml) runs on pull requests,
+version tags and manual dispatches. Branch pushes, including pushes to `main`,
+do not trigger it. Pull requests check formatting, run `go vet`, Go tests with
+the race detector, JavaScript behavior tests and a Windows cross-compile.
+The bundle is built only on version tags or manual dispatches, after those
+checks pass. Only version tags publish a release.
 
 `make test` needs Node.js 22+ for the dependency-free tests in `tests/`, and Go.
 The JavaScript tests execute the shipped script with controlled HTTP completion
@@ -382,7 +393,7 @@ These tests also exercise region synchronization and guarded clearing against
 the real CLI using disposable AWS files, without contacting AWS. CI skips the
 CLI contract tests when no `awsm` binary is installed.
 
-macOS is the only job: the bundle needs `codesign` and `iconutil`, and Wails
+Both jobs use macOS: the bundle needs `codesign` and `iconutil`, and Wails
 links against the system frameworks, so there is nowhere else to build it.
 Windows is covered by a cross compile, which needs neither and still catches a
 platform-specific file that stopped compiling. Linux is not covered — it needs a
@@ -422,7 +433,7 @@ release looking perfectly signed.
 The version comes from the tag: `VERSION` reaches `build/package.sh`, so what
 `CFBundleShortVersionString` says and what the release says cannot disagree.
 
-Every run also keeps the zip as a **workflow artifact**, which is what a manual
+Every bundle build also keeps the zip as a **workflow artifact**, which is what a manual
 dispatch from the Actions tab leaves behind when there is no tag to release:
 attached to the run, ninety days, and a GitHub login needed to fetch it.
 

@@ -6,7 +6,8 @@
 # which reads as something being wrong with the application rather than with the
 # download. The cost is about four megabytes.
 #
-# Tests run on pushes and pull requests; tagged builds also publish a release.
+# Pull requests run checks. Only version tags and manual dispatches build bundles.
+# Pushes to branches, including main, do not trigger this workflow.
 #
 # macOS is the only job here because macOS is the only platform this can be
 # built on: the bundle needs codesign and iconutil, and Wails links against the
@@ -20,7 +21,6 @@ name: build
 on:
   pull_request:
   push:
-    branches: ["**"]
     tags: ["v*"]
   # For building without cutting a version, which is also how to try a change
   # to this file without tagging something to find out.
@@ -35,14 +35,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  macos:
+  checks:
     runs-on: macos-latest
     timeout-minutes: 20
-
-    # Needed only by the last step, and only on a tag. Declared here because
-    # permissions are per job rather than per step.
-    permissions:
-      contents: write
 
     steps:
       - uses: actions/checkout@v5
@@ -90,6 +85,20 @@ jobs:
           GOOS: windows
           GOARCH: amd64
         run: go build -o /dev/null .
+
+  macos:
+    needs: checks
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: macos-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
 
       - name: Build the universal bundle
         # Both architectures are compiled here and fused with lipo. The macOS

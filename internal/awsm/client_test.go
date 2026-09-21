@@ -405,3 +405,24 @@ func TestRegionChangeRequestsAtomicActiveSynchronization(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestCurrentStatusOverridesAnObsoleteDaemonWarning(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	if err := os.MkdirAll(filepath.Join(dir, ".awsm"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".awsm", "daemon-state.json"), []byte(`{"blocked":"sso","blocked_profile":"work"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, reason := range []string{"", "sso", "mfa"} {
+		c := fakeAwsm(t, "echo 'work|eu-west-1|SSO|47m|123|"+reason+"'")
+		status, err := c.Status(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(status.Blocked) != reason {
+			t.Fatalf("stale warning won: %+v", status)
+		}
+	}
+}

@@ -1,6 +1,8 @@
 package awsm
 
 import (
+	"crypto/sha1"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -178,5 +180,44 @@ func TestDesktopMutationsWithTheRealCLI(t *testing.T) {
 	status, err = client.Status(t.Context())
 	if err != nil || status.Active() {
 		t.Fatalf("profile not cleared: %+v, %v", status, err)
+	}
+}
+
+func TestRealCLIReportsRecoveredSSOBeforeTheDaemonRuns(t *testing.T) {
+	client := realAwsm(t)
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	config := filepath.Join(dir, "config")
+	credentials := filepath.Join(dir, "credentials")
+	t.Setenv("AWS_CONFIG_FILE", config)
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", credentials)
+	write := func(path, contents string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(config, "[sso-session corp]\nsso_start_url = https://example.awsapps.com/start\nsso_region = eu-west-1\n[profile work]\nsso_session = corp\nsso_account_id = 123456789012\nsso_role_name = Admin\nregion = eu-west-1\n")
+	write(credentials, "[default]\n# source_profile = work\n# expires = 2099-01-01T00:00:00Z\naws_access_key_id = FAKE\naws_secret_access_key = fake\n")
+	write(filepath.Join(dir, ".awsm", "daemon-state.json"), `{"blocked":"sso","blocked_profile":"work"}`)
+	token := filepath.Join(dir, ".aws", "sso", "cache", fmt.Sprintf("%x.json", sha1.Sum([]byte("corp"))))
+	write(token, `{"startUrl":"https://example.awsapps.com/start","accessToken":"fake","expiresAt":"2020-01-01T00:00:00Z"}`)
+	before, err := client.Status(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.Blocked != BlockedSSO {
+		t.Fatalf("expired token lost warning: %+v", before)
+	}
+	write(token, `{"startUrl":"https://example.awsapps.com/start","accessToken":"fresh","expiresAt":"2099-01-01T00:00:00Z"}`)
+	after, err := client.Status(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Blocked != "" {
+		t.Fatalf("login still blocked before daemon tick: %+v", after)
 	}
 }

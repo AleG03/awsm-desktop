@@ -357,12 +357,11 @@ func (s *Server) Status(ctx context.Context) (StatusOnly, error) {
 	if err != nil {
 		return StatusOnly{}, err
 	}
-	blocked, _ := awsm.ReadDaemonState().BlockedFor(status.Profile)
 	return StatusOnly{
 		Profile: status.Profile,
 		Region:  status.Region,
 		TTL:     status.TTL,
-		Blocked: blocked.Short(),
+		Blocked: status.Blocked.Short(),
 	}, nil
 }
 
@@ -388,9 +387,7 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	state.TTL = status.TTL
 	state.AccountID = status.AccountID
 
-	if blocked, ok := awsm.ReadDaemonState().BlockedFor(status.Profile); ok {
-		state.Blocked = string(blocked)
-	}
+	state.Blocked = string(status.Blocked)
 
 	// Asked on every open because it costs the same few milliseconds as the
 	// status itself, and because the answer can change without this panel

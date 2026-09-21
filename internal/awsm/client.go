@@ -327,11 +327,12 @@ func (c *Client) Profiles(ctx context.Context) ([]Profile, error) {
 
 // Status is the offline snapshot shown in the status bar.
 type Status struct {
-	Profile   string `json:"profile"`
-	Region    string `json:"region"`
-	Type      string `json:"type"`
-	TTL       string `json:"ttl"`
-	AccountID string `json:"account_id"`
+	Profile   string        `json:"profile"`
+	Region    string        `json:"region"`
+	Type      string        `json:"type"`
+	TTL       string        `json:"ttl"`
+	Blocked   BlockedReason `json:"blocked"`
+	AccountID string        `json:"account_id"`
 }
 
 // Active reports whether a profile is currently set.
@@ -340,7 +341,7 @@ func (s Status) Active() bool { return s.Profile != "" }
 // statusFormat asks for the fields separated by a character that cannot occur
 // in any of them. `awsm prompt` collapses runs of whitespace, so a space
 // separated format would not survive an empty field.
-const statusFormat = "{profile}|{region}|{type}|{ttl}|{account}"
+const statusFormat = "{profile}|{region}|{type}|{ttl}|{account}|{blocked_reason}"
 
 // Status reads the active profile without touching the network.
 //
@@ -362,7 +363,14 @@ func (c *Client) Status(ctx context.Context) (Status, error) {
 	for len(parts) < 5 {
 		parts = append(parts, "")
 	}
+	// Older CLIs omit the sixth field or echo the unknown placeholder. Keep
+	// compatibility, but updated CLIs compute the warning from current tokens.
+	blocked, _ := ReadDaemonState().BlockedFor(parts[0])
+	if len(parts) >= 6 && parts[5] != "{blocked_reason}" {
+		blocked = BlockedReason(parts[5])
+	}
 	return Status{
+		Blocked:   blocked,
 		Profile:   parts[0],
 		Region:    parts[1],
 		Type:      parts[2],

@@ -173,3 +173,29 @@ func TestSettingsApplicationsCannotOverlap(t *testing.T) {
 		t.Fatal("last settings change was lost")
 	}
 }
+
+func TestPanelAndMenuBarUseTheResolvedSSOStatusImmediately(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	if err := os.MkdirAll(filepath.Join(dir, ".awsm"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".awsm", "daemon-state.json"), []byte(`{"blocked":"sso","blocked_profile":"work"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s := newTestServer(t, `case "$1" in
+ prompt) echo 'work|eu-west-1|SSO|59m|123|';;
+ profile) echo '[{"name":"work","sso_session":"corp"}]';;
+ esac`)
+	status, err := s.Status(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Blocked != "" || status.TTL != "59m" {
+		t.Fatalf("menu bar still expired: %+v", status)
+	}
+	_, body := request(t, s, "GET", "/api/state", "")
+	if body["blocked"] != "" || body["ttl"] != "59m" {
+		t.Fatalf("panel still expired: %+v", body)
+	}
+}
