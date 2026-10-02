@@ -6,8 +6,9 @@
 # which reads as something being wrong with the application rather than with the
 # download. The cost is about four megabytes.
 #
-# Pull requests run checks. Only version tags and manual dispatches build bundles.
-# Pushes to branches, including main, do not trigger this workflow.
+# It runs only when a version tag is pushed: the checks, then the bundle, then
+# the release. Nothing else starts it -- not pull requests, not pushes to a
+# branch, main included -- so before tagging, `make test` is the check.
 #
 # macOS is the only job here because macOS is the only platform this can be
 # built on: the bundle needs codesign and iconutil, and Wails links against the
@@ -19,17 +20,13 @@
 name: build
 
 on:
-  pull_request:
   push:
     tags: ["v*"]
-  # For building without cutting a version, which is also how to try a change
-  # to this file without tagging something to find out.
-  workflow_dispatch:
 
 permissions:
   contents: read
 
-# A new push makes the previous run pointless.
+# A tag pushed again makes the previous run pointless.
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
@@ -88,7 +85,6 @@ jobs:
 
   macos:
     needs: checks
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     runs-on: macos-latest
     timeout-minutes: 20
     permissions:
@@ -104,12 +100,9 @@ jobs:
         # Both architectures are compiled here and fused with lipo. The macOS
         # SDK carries both, so the Intel half needs no Intel runner.
         run: |
-          # A tagged build names itself after the tag, so the version inside the
-          # bundle and the version on the release cannot disagree. Everything
-          # else keeps the default from build/package.sh.
-          if [ "$GITHUB_REF_TYPE" = tag ]; then
-            export VERSION="${GITHUB_REF_NAME#v}"
-          fi
+          # Named after the tag, so the version inside the bundle and the
+          # version on the release cannot disagree.
+          export VERSION="${GITHUB_REF_NAME#v}"
           ARCH=universal ./build/package.sh
 
       - name: Check the bundle came out whole
@@ -164,12 +157,11 @@ jobs:
           if-no-files-found: error
 
       - name: Publish the release
-        # Only on a version tag. Artifacts expire after ninety days and need a
-        # GitHub login to fetch; a release is permanent and public, which is
-        # what an application anybody is meant to install has to be.
+        # Artifacts expire after ninety days and need a GitHub login to fetch;
+        # a release is permanent and public, which is what an application
+        # anybody is meant to install has to be.
         #
         # gh is already on the runner, so this needs no third party action.
-        if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

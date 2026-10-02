@@ -9,8 +9,8 @@ const tick = () => new Promise(resolve => setImmediate(resolve));
 
 // Run the shipped script, including its event wiring, with controllable HTTP
 // completion order. Layout is checked separately in the browser at native size.
-async function panel(initialState = {profile:'A',region:'eu-west-1',theme:'light',profiles:[{name:'A'},{name:'B'}]}, storage = new Map()) {
-  const elements = new Map(), requests = [], windowEvents = {}, documentEvents = {};
+async function panel(initialState = {profile:'A',region:'eu-west-1',theme:'light',profiles:[{name:'A'},{name:'B'}]}, storage = new Map(), {grant = width => width} = {}) {
+  const elements = new Map(), requests = [], resizes = [], windowEvents = {}, documentEvents = {};
   class Element {
     constructor(tag = 'div') {
       this.tag = tag; this.hidden = false; this.value = ''; this.children = [];
@@ -30,6 +30,9 @@ async function panel(initialState = {profile:'A',region:'eu-west-1',theme:'light
     focus() { document.activeElement = this; }
     select() { this.focus(); }
     scrollIntoView() {}
+    remove() {}
+    // A fixed-pitch stand-in for the system font: seven points a character.
+    getBoundingClientRect() { return {width: this.textContent.length * 7, height: 18, left: 0}; }
     closest(selector) {
       if (selector === '#notice button') return this.inNotice ? this : null;
       return ['button','select','textarea'].includes(this.tag) ? this : null;
@@ -39,16 +42,31 @@ async function panel(initialState = {profile:'A',region:'eu-west-1',theme:'light
     const element = new Element(match[1]); element.hidden = /\bhidden\b/.test(match[0]); elements.set(match[2], element);
   }
   const document = {getElementById:id=>elements.get(id),createElement:tag=>new Element(tag),body:new Element(),documentElement:new Element(),readyState:'complete',addEventListener:(n,cb)=>documentEvents[n]=cb};
-  const context = vm.createContext({document, window:{addEventListener:(n,cb)=>windowEvents[n]=cb}, navigator:{platform:'MacIntel'}, crypto:{getRandomValues:array=>webcrypto.getRandomValues(array)},
+  // Rows and the list are padded 8 a side with 10 between columns, the pane 8
+  // and 6 with a 1 point border, as in panel.css.
+  const getComputedStyle = element => element === elements.get('sessions')
+    ? {paddingLeft:'8px', paddingRight:'6px', borderLeftWidth:'0px', borderRightWidth:'1px'}
+    : {paddingLeft:'8px', paddingRight:'8px', columnGap:'10px'};
+  const context = vm.createContext({document, getComputedStyle, window:{addEventListener:(n,cb)=>windowEvents[n]=cb}, navigator:{platform:'MacIntel'}, crypto:{getRandomValues:array=>webcrypto.getRandomValues(array)},
     localStorage:{getItem:key=>storage.get(key) ?? null,setItem:(key,value)=>storage.set(key,value)},setTimeout:()=>1,clearTimeout(){},Option:function(text,value){this.textContent=text;this.value=value;},
-    fetch(path, options) { return new Promise((resolve,reject)=>requests.push({path,body:options.body && JSON.parse(options.body),resolve:data=>resolve({ok:true,json:async()=>data}),reject})); }
+    fetch(path, options) {
+      const body = options.body && JSON.parse(options.body);
+      // Answered at once, and kept apart, so that no other test has to step
+      // over the panel fitting itself to its names.
+      if (path === '/api/resize') {
+        resizes.push(body.width);
+        try { const width = grant(body.width); return Promise.resolve({ok:true,json:async()=>({width})}); }
+        catch (error) { return Promise.reject(error); }
+      }
+      return new Promise((resolve,reject)=>requests.push({path,body,resolve:data=>resolve({ok:true,json:async()=>data}),reject}));
+    }
   });
   vm.runInContext(source, context);
   const run = code => vm.runInContext(code, context);
   const take = path => { const i=requests.findIndex(r=>r.path===path); assert.notEqual(i,-1,`missing ${path}`); return requests.splice(i,1)[0]; };
   take('/api/state').resolve(initialState);
   await tick();
-  return {run,take,requests,elements,windowEvents,documentEvents};
+  return {run,take,requests,resizes,elements,windowEvents,documentEvents};
 }
 
 test('late state responses cannot replace a newer profile or its active badge', async()=>{
@@ -474,4 +492,106 @@ test('a preference saved before the settings were read leaves the bindings alone
   const h=await panel(); const saved=h.run('saveSettings({theme:"dark"})'); await tick();
   const write=h.take('/api/settings'); assert.equal('bindings' in write.body,false);
   write.resolve(write.body); await saved;
+});
+
+// --- columns ----------------------------------------------------------------
+
+test('the account name is read back out of the name awsm sso update gave the profile', async()=>{
+  const h=await panel();
+  const name=profile=>h.run(`accountName(${JSON.stringify(profile)})`);
+  assert.equal(name({name:'besharp-besharp-isotopes-administratoraccess',sso_session:'besharp',sso_role_name:'AdministratorAccess'}),'besharp-isotopes');
+  // Sessions and roles are cleaned the way awsm cleans them.
+  assert.equal(name({name:'acme-co-prod-awsreadonlyaccess',sso_session:'Acme_Co',sso_role_name:'AWSReadOnlyAccess'}),'prod');
+  // A collision suffix comes off first, with or without its counter.
+  for (const suffix of ['-123456789012','-123456789012-2']) {
+    assert.equal(name({name:'team-shared-admins'+suffix,sso_session:'team',sso_role_name:'Admins',sso_account_id:'123456789012'}),'shared');
+  }
+  // Anything not named that way has no account name to recover.
+  for (const profile of [
+    {name:'my-own-name',sso_session:'team',sso_role_name:'Admins'},
+    {name:'team-admins',sso_session:'team',sso_role_name:'Admins'},
+    {name:'static-keys'},
+    {name:'team-prod-admins',sso_session:'team'},
+  ]) assert.equal(name(profile),'',JSON.stringify(profile));
+});
+
+test('every row shows session, account, permission set and region, in that order', async()=>{
+  const h=await panel({profile:'acme-prod-admins',profiles:[
+    {name:'acme-prod-admins',sso_session:'acme',sso_role_name:'Admins',region:'eu-west-1'},
+    {name:'legacy-keys',region:'us-east-1',mfa_serial:'arn:aws:iam::1:mfa/me'},
+  ]});
+  const cells=i=>h.run(`rows[${i}].element.children`).map(c=>[c.className,c.textContent]);
+  assert.deepEqual(cells(0),[['cell row-session','acme'],['cell row-name','prodActive'],['cell row-role','Admins'],['cell row-region','eu-west-1']]);
+  // Without an account to read, the profile's own name stands in for it.
+  assert.deepEqual(cells(1),[['cell row-session',''],['cell row-name','legacy-keysMFA'],['cell row-role',''],['cell row-region','us-east-1']]);
+  assert.equal(h.run('rows[0].element.title').startsWith('acme-prod-admins'),true);
+  assert.equal(h.run('rows[0].element.attributes["aria-label"]'),'prod · Active · acme · Admins · eu-west-1');
+  const headings=h.elements.get('list').children[0];
+  assert.equal(headings.className,'columns');
+  assert.deepEqual(headings.children.map(c=>c.textContent),['SSO session','Account','Permission set','Region']);
+});
+
+test('no column headings over an empty list', async()=>{
+  const h=await panel(); search(h,'nothing matches this');
+  assert.deepEqual(h.elements.get('list').children.map(c=>c.className),['empty']);
+});
+
+test('a CamelCase permission set may wrap between its words, and only there', async()=>{
+  const h=await panel();
+  const breaks=text=>h.run(`wordBreaks(${JSON.stringify(text)})`).split('​');
+  assert.deepEqual(breaks('RepositoriesAndPipelinesAccess'),['Repositories','And','Pipelines','Access']);
+  assert.deepEqual(breaks('KleecksMAPAssumeAdminRole'),['Kleecks','MAP','Assume','Admin','Role']);
+  assert.deepEqual(breaks('AWSReadOnlyAccess'),['AWS','Read','Only','Access']);
+  assert.deepEqual(breaks('aws-laspo-mes-ops-developer'),['aws-laspo-mes-ops-developer']);
+});
+
+// --- fitting the window -----------------------------------------------------
+
+// At seven points a character, with the paddings the harness reports:
+//   session      longest is "longer-session-name"          19 → 133
+//   account      "shared-services" + the Active badge kept  21 → 147
+//   permission   the heading, "Permission set", is longest  14 →  98
+//   region       "ap-southeast-2"                           14 →  98
+//   list   133 + 147 + 98 + 98 + 3 gaps of 10 + 16 + 16    = 538
+//   pane   "longer-session-name" + its count "1"   20 → 140 + 8 + 6 + 1 = 155
+const fitState = {profile:'static', profiles:[
+  {name:'team-shared-services-admins',sso_session:'team',sso_role_name:'Admins',region:'eu-west-1'},
+  {name:'longer-session-name-x-readonly',sso_session:'longer-session-name',sso_role_name:'ReadOnly',region:'ap-southeast-2'},
+  {name:'static'},
+]};
+const rootStyle = (h, name) => h.run(`document.documentElement.style[${JSON.stringify(name)}]`);
+
+test('the window is asked to be as wide as the longest session, account, permission set and region', async()=>{
+  const h=await panel(fitState);
+  assert.deepEqual(h.resizes,[155+538]);
+  assert.equal(rootStyle(h,'--profile-columns'),'minmax(133px, 133fr) minmax(147px, 147fr) minmax(98px, 98fr) minmax(98px, 98fr)');
+  assert.equal(rootStyle(h,'--sessions-width'),'155px');
+});
+
+test('fitted once per set of profiles: reopening, searching, filtering and switching leave the width alone', async()=>{
+  const h=await panel(fitState);
+  const reload=async next=>{ const done=h.run('load()'); h.take('/api/state').resolve(next); await done; await tick(); };
+  await reload(fitState);
+  search(h,'shared'); chooseSession(h,'team'); search(h,'');
+  await reload({...fitState, profile:'team-shared-services-admins'});
+  assert.deepEqual(h.resizes,[693]);
+  // A longer account is a reason to measure again.
+  await reload({...fitState, profiles:[...fitState.profiles,{name:'team-a-much-longer-account-name-admins',sso_session:'team',sso_role_name:'Admins'}]});
+  assert.equal(h.resizes.length,2);
+  assert.equal(h.resizes[1],693+('a-much-longer-account-nameActive'.length-21)*7);
+});
+
+test('a screen too narrow for the names shares out what there is, and only then do they wrap', async()=>{
+  const h=await panel(fitState,new Map(),{grant:()=>500});
+  await tick();
+  assert.equal(rootStyle(h,'--profile-columns'),'minmax(0px, 133fr) minmax(0px, 147fr) minmax(0px, 98fr) minmax(0px, 98fr)');
+  assert.equal(rootStyle(h,'--sessions-width'),'125px');
+});
+
+test('a resize that fails is asked for again on the next load', async()=>{
+  let fail=true;
+  const h=await panel(fitState,new Map(),{grant:width=>{ if (fail) throw new Error('no window'); return width; }});
+  await tick(); fail=false;
+  const done=h.run('load()'); h.take('/api/state').resolve(fitState); await done; await tick();
+  assert.deepEqual(h.resizes,[693,693]);
 });

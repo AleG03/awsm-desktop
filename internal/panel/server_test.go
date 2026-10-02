@@ -583,6 +583,28 @@ func TestASaveThatDoesNotMentionTheBindingsKeepsThem(t *testing.T) {
 	}
 }
 
+func TestTheResizeAnswersWithTheWidthTheWindowGot(t *testing.T) {
+	s := newTestServer(t, `echo ok`)
+
+	// No window behind it: the page is told it has what it asked for.
+	if _, payload := request(t, s, "POST", "/api/resize", `{"width":820}`); payload["width"] != float64(820) {
+		t.Errorf("without a window the answer was %v", payload)
+	}
+
+	// The screen allowed less, and the page has to hear that to wrap instead.
+	var asked int
+	s.OnResize(func(width int) (int, error) { asked = width; return 700, nil })
+	if _, payload := request(t, s, "POST", "/api/resize", `{"width":820}`); asked != 820 || payload["width"] != float64(700) {
+		t.Errorf("asked %d, answered %v", asked, payload)
+	}
+
+	for _, body := range []string{`{"width":0}`, `{"width":-5}`, `{"width":99999}`, `{}`} {
+		if status, _ := request(t, s, "POST", "/api/resize", body); status != 400 {
+			t.Errorf("%s was accepted with %d", body, status)
+		}
+	}
+}
+
 // github stands in for the releases endpoint.
 func github(t *testing.T, body string) string {
 	t.Helper()

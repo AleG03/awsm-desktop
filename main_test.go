@@ -518,3 +518,21 @@ func TestBothArchitecturesAreBuiltAndChecked(t *testing.T) {
 		}
 	}
 }
+
+func TestThePanelIsAsWideAsItsNamesWithinTheScreen(t *testing.T) {
+	for _, c := range []struct {
+		name           string
+		wanted, screen int
+		want           int
+	}{
+		{"names that fit", 820, 1512, 820},
+		{"names wider than the screen", 2000, 1512, 1512 - 2*screenMargin},
+		{"names shorter than the panel's minimum", 300, 1512, minPanelWidth},
+		{"a screen that could not be read", 2000, 0, 2000},
+		{"a screen narrower than the minimum", 900, 400, minPanelWidth},
+	} {
+		if got := fitWidth(c.wanted, c.screen); got != c.want {
+			t.Errorf("%s: fitWidth(%d, %d) = %d, want %d", c.name, c.wanted, c.screen, got, c.want)
+		}
+	}
+}

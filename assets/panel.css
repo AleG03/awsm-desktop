@@ -9,8 +9,15 @@
      what a heading actually measures: .group sets it, and .row keeps the
      selected row from scrolling underneath one. */
   --group-height: 29px;
-  /* The session pane's width. main.go widens the window by the same amount,
-     so the list keeps the width its names were measured against. */
+  /* The column headings' height. The group headings stick just under them,
+     and .row reserves both when it scrolls into view. */
+  --columns-height: 26px;
+  /* One template for the headings and every row, which is what keeps the
+     columns in line: each row is a grid of its own. These two are only where
+     the panel starts: once the profiles are in, panel.js measures the longest
+     value in each column and the longest session, sets both to fit, and asks
+     for a window wide enough to hold them (fitWindow). */
+  --profile-columns: minmax(0, 84fr) minmax(0, 182fr) minmax(0, 160fr) 72px;
   --sessions-width: 180px;
 
   color-scheme: light;
@@ -384,8 +391,42 @@ main {
   flex: 1;
   min-width: 0;
   overflow-y: auto;
+  /* A scroll bar that takes room takes it from the columns. Reserved whether
+     or not the list overflows, so the width measured for the window is the
+     width the columns get. */
+  scrollbar-gutter: stable;
+  /* Never sideways. Should the columns ever be measured a little wider than
+     the list turns out to be, a row's padding runs under the edge rather than
+     the whole list growing a horizontal scroll bar. */
+  overflow-x: hidden;
   overscroll-behavior: contain;
   padding: 0 8px 6px;
+}
+
+/* The column headings, stuck to the top of the list. Pulled out to the list's
+   edges like the group headings, then padded back in by the list's and a row's
+   padding together, so each heading starts where its column does. */
+.columns {
+  margin: 0 -8px;
+  height: var(--columns-height);
+  box-sizing: border-box;
+  padding: 7px 16px 4px;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--sheet);
+  border-bottom: 1px solid var(--rule);
+  display: grid;
+  grid-template-columns: var(--profile-columns);
+  gap: 10px;
+  font-size: 11px;
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+.columns .cell {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .group {
@@ -398,7 +439,7 @@ main {
   box-sizing: border-box;
   padding: 8px 14px 4px;
   position: sticky;
-  top: 0;
+  top: var(--columns-height);
   z-index: 1;
   background: var(--sheet);
   font-size: 11px;
@@ -411,8 +452,12 @@ main {
 /* Rows are only text. The actions live in the footer, so nothing appears or
    disappears under the pointer and the list never changes width. */
 .row {
-  display: flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: var(--profile-columns);
+  /* On one baseline, so a cell that wraps keeps its first line level with the
+     others; the whole row is then centred in its minimum height. */
+  align-items: baseline;
+  align-content: center;
   gap: 10px;
   padding: 7px 8px;
   min-height: 36px;
@@ -424,8 +469,9 @@ main {
      29px of a 28px row hidden, so effectively all of it.
 
      scrollIntoView honours scroll-margin, so reserving the heading's height
-     here stops the row short of it. It must stay equal to --group-height. */
-  scroll-margin-top: var(--group-height);
+     here stops the row short of it. The column headings are stuck above the
+     group heading, so both are reserved. */
+  scroll-margin-top: calc(var(--columns-height) + var(--group-height));
 }
 
 .row:hover {
@@ -437,10 +483,27 @@ main {
   color: var(--accent-text);
 }
 
-.row-name {
-  flex: 1;
+/* Long values wrap rather than being cut short: in the account column in
+   particular, the end of a name is often what tells two accounts apart. The
+   session, below, is the exception. */
+.row .cell {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.row-session,
+.row-role {
+  font-size: 12px;
+  color: var(--dim);
+}
+
+/* The one column cut short instead: its whole value is in the group heading
+   just above and in the session pane, and wrapping it for the two or three
+   long session names cost those rows a second line for nothing. */
+.row .row-session {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .badge {
@@ -459,12 +522,13 @@ main {
 }
 
 .row-region {
-  flex: none;
   font-size: 12px;
   color: var(--faint);
   white-space: nowrap;
 }
 
+.row.selected .row-session,
+.row.selected .row-role,
 .row.selected .row-region {
   color: inherit;
   opacity: 1;
@@ -709,3 +773,33 @@ button:focus-visible, select:focus-visible, input:focus-visible {
 #loginCheckbox { accent-color: var(--accent); }
 #clearButton { color: var(--warn); }
 footer .hint { font-size: 11px; }
+
+/* --- measuring ----------------------------------------------------------- */
+
+/* Copies of the sessions and rows, laid out where nothing shows them, at the
+   width their content wants: unwrapped, unclipped, uncut. See measure() in
+   panel.js. Last in the file so it wins over the rules that clip. */
+.measure {
+  position: fixed;
+  top: 0;
+  left: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.measure .row,
+.measure .columns,
+.measure .session {
+  display: flex;
+  width: max-content;
+  position: static;
+  margin: 0;
+}
+
+.measure .row .cell,
+.measure .columns .cell,
+.measure .session .session-name {
+  flex: none;
+  white-space: nowrap;
+  overflow: visible;
+}

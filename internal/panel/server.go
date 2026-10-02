@@ -50,6 +50,10 @@ type Server struct {
 	// can say so and the panel can refuse to hide while it runs.
 	busy func(doing string)
 
+	// resize sets the panel's width and answers with the width it got, which
+	// the screen may have made narrower than the one asked for.
+	resize func(width int) (int, error)
+
 	// version is this build's own version, and openURL sends the person to a
 	// page in their browser. Both belong to the application around this
 	// package, so they arrive the same way everything else framework-shaped
@@ -123,6 +127,12 @@ func (s *Server) UseAssetHandler(handler http.Handler) { s.static = handler }
 // scheme the webview serves this panel from. Going through the platform is not
 // a workaround, it is the only thing that works.
 func (s *Server) OnCopy(copy func(string) bool) { s.copyText = copy }
+
+// OnResize wires changing the panel's width.
+//
+// The page asks, because only the page can measure its names; the window
+// belongs to the framework, which this package does not import.
+func (s *Server) OnResize(resize func(width int) (int, error)) { s.resize = resize }
 
 // OnBusy sets what to call when a long operation starts and ends.
 //
@@ -269,6 +279,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/update/open", s.handleOpenRelease)
 	mux.HandleFunc("POST /api/cancel", s.handleCancel)
 	mux.HandleFunc("POST /api/hide", s.handleHide)
+	mux.HandleFunc("POST /api/resize", s.handleResize)
 	mux.HandleFunc("POST /api/quit", s.handleQuit)
 
 	static := s.static
@@ -920,6 +931,36 @@ func (s *Server) handleHide(w http.ResponseWriter, _ *http.Request) {
 	if s.hide != nil {
 		s.hide()
 	}
+}
+
+// maxPanelWidth bounds what the page may ask for. The screen is the real limit,
+// and is applied where the window is; this only keeps a nonsense number from a
+// miscalculation away from the window manager.
+const maxPanelWidth = 10000
+
+// handleResize gives the panel the width its longest names need.
+func (s *Server) handleResize(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Width int `json:"width"`
+	}
+	if !decode(w, r, &body) {
+		return
+	}
+	if body.Width <= 0 || body.Width > maxPanelWidth {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "width out of range"})
+		return
+	}
+	// Without a window to resize -- the devserver, a test -- the page is told
+	// it has what it asked for, which is true of a browser tab sized to suit.
+	got := body.Width
+	if s.resize != nil {
+		var err error
+		if got, err = s.resize(body.Width); err != nil {
+			s.fail(w, err)
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"width": got})
 }
 
 func (s *Server) handleQuit(w http.ResponseWriter, _ *http.Request) {
