@@ -64,7 +64,21 @@ interface: edit, reload, and use the browser's developer tools.
 | ⌘C / ⌘⇧C | copy the account id / the profile name |
 | ⌘T | open a terminal on that profile |
 | ⌘K | clear the active profile |
-| Esc | clear the search, then close the panel |
+| Esc (in search) | clear the search, then the session filter, then close the panel |
+
+The compact **All sessions** menu beside search limits the list to one SSO
+session, including recent profiles. Search further narrows that session's
+results. The menu lists full session names alphabetically and appears only
+when it can narrow the list. Profiles without an SSO session appear under
+**All sessions**.
+
+Changing the filter keeps your search text, selects the first result and returns
+focus to search. It leaves credentials and the active profile unchanged; the
+active profile remains visible in the header even outside the filter. The choice
+survives hiding and reopening the panel, resets to **All sessions** when the app
+restarts, and resets if that session disappears after a successful refresh.
+The menu keeps its native keyboard controls and is disabled while an operation
+is running.
 
 **Right clicking a profile** offers the same actions as a native menu, on the
 row under the pointer. **Right clicking the profile at the top** offers them for

@@ -28,6 +28,7 @@ const ui = {
   clearButton: el("clearButton"),
 
   search: el("search"),
+  sessionFilter: el("sessionFilter"),
   list: el("list"),
   hint: el("hint"),
   settingsButton: el("settingsButton"),
@@ -57,6 +58,8 @@ let state = { profiles: [] };
 let prefs = {};
 let rows = [];
 let selected = 0;
+// Kept only for this app process, including when the panel is hidden.
+let selectedSession = "";
 let recording = false;
 let stateRequest = 0;
 let activeAction = null;
@@ -154,7 +157,32 @@ const searchTerms = () => ui.search.value.toLowerCase().split(/\s+/).filter(Bool
 
 function visibleProfiles() {
   const terms = searchTerms();
-  return state.profiles.filter((p) => matches(p, terms));
+  return state.profiles.filter((p) =>
+    (!selectedSession || p.sso_session === selectedSession) && matches(p, terms));
+}
+
+function updateSessionOptions() {
+  const sessions = [...new Set(state.profiles.map(p => p.sso_session).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b));
+  if (selectedSession && !sessions.includes(selectedSession)) {
+    selectedSession = "";
+    selected = 0;
+  }
+  ui.sessionFilter.replaceChildren(new Option("All sessions", ""),
+    ...sessions.map(session => new Option(session, session)));
+  ui.sessionFilter.value = selectedSession;
+  ui.sessionFilter.title = selectedSession || "All sessions";
+  ui.sessionFilter.hidden = sessions.length === 0 ||
+    (sessions.length === 1 && state.profiles.every(p => p.sso_session === sessions[0]));
+}
+
+function changeSession(session) {
+  selectedSession = session;
+  ui.sessionFilter.value = session;
+  ui.sessionFilter.title = session || "All sessions";
+  selected = 0;
+  render();
+  ui.search.focus();
 }
 
 // --- the list --------------------------------------------------------------
@@ -545,6 +573,7 @@ async function run(action, { refresh = true, doing = "", stoppable = false } = {
   activeAction = operation;
   ++stateRequest; // Responses requested before this action cannot restore old state.
   document.body.classList.add("busy");
+  ui.sessionFilter.disabled = true;
   ui.list.setAttribute("aria-busy", "true");
   renderNotice();
   const explain = doing ? setTimeout(() => {
@@ -573,6 +602,7 @@ async function run(action, { refresh = true, doing = "", stoppable = false } = {
     activeAction = null;
     reloadAfterAction = false;
     document.body.classList.remove("busy");
+    ui.sessionFilter.disabled = false;
     ui.list.setAttribute("aria-busy", "false");
     renderNotice();
     if (stopped) flash("Cancelled.");
@@ -700,6 +730,7 @@ async function load({ duringAction = false } = {}) {
   // Keep the selected profile stable when the list changes under the pointer.
   const selectedName = current()?.name;
   state = { ...next, profiles: next.profiles || [] };
+  updateSessionOptions();
   applyTheme(pendingSettings ? prefs.theme : state.theme);
   renderCurrent();
   render();
@@ -956,6 +987,8 @@ document.addEventListener("keydown", (event) => {
     if (event.key !== "Tab" && !event.target.closest?.("#notice button")) event.preventDefault();
     return;
   }
+  // Including Escape: the native session menu must own all of its keys.
+  if (event.target === ui.sessionFilter) return;
   if (event.key !== "Escape" && event.target.closest?.("button, select, input:not(#search), textarea")) return;
 
   switch (event.key) {
@@ -972,7 +1005,10 @@ document.addEventListener("keydown", (event) => {
       event.preventDefault();
       if (ui.search.value) {
         ui.search.value = "";
+        selected = 0;
         render();
+      } else if (selectedSession) {
+        changeSession("");
       } else {
         dismiss();
       }
@@ -1039,6 +1075,11 @@ document.addEventListener("keydown", (event) => {
 ui.search.addEventListener("input", () => {
   selected = 0;
   render();
+});
+
+ui.sessionFilter.addEventListener("change", () => {
+  if (activeAction) return;
+  changeSession(ui.sessionFilter.value);
 });
 
 ui.current.addEventListener("click", () => {

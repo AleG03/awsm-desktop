@@ -294,8 +294,16 @@ header {
   color: var(--faint);
 }
 
-#search:focus-visible {
+#search:focus-visible, #sessionFilter:focus-visible {
   box-shadow: 0 0 0 2px var(--accent);
+}
+
+#sessionFilter {
+  flex: 0 0 128px;
+  width: 128px;
+  min-width: 0;
+  color: var(--text);
+  text-overflow: ellipsis;
 }
 
 /* --- the list ----------------------------------------------------------- */

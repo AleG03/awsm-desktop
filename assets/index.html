@@ -50,11 +50,14 @@
           type="search"
           id="search"
           aria-label="Search profiles" aria-controls="list"
-          placeholder="Search profiles, sessions, accounts"
+          placeholder="Search profiles…"
           autocomplete="off"
           autocorrect="off"
           spellcheck="false"
         />
+        <select id="sessionFilter" aria-label="Filter by SSO session" aria-controls="list" hidden>
+          <option value="">All sessions</option>
+        </select>
       </div>
 
       <main id="list" role="listbox" aria-label="AWS profiles"></main>
@@ -152,7 +155,7 @@
           <div><kbd>⌘⇧C</kbd><span>Copy the profile name</span></div>
           <div><kbd>⌘T</kbd><span>Open a terminal on that profile</span></div>
           <div><kbd>⌘K</kbd><span>Clear the active profile</span></div>
-          <div><kbd>Esc</kbd><span>Clear the search, then close</span></div>
+          <div><kbd>Esc</kbd><span>Clear search, then session filter, then close</span></div>
         </div>
 
         <p class="field-note keys-note">
