@@ -301,3 +301,148 @@ test('session menu stays disabled through action refresh and recovers after fail
     assert.equal(h.elements.get('sessionFilter').value,'team');
   }
 });
+
+// --- keys and clicks --------------------------------------------------------
+
+async function settingsOpen(initial) {
+  const h=await panel(initial); h.run('showSettings(true)');
+  h.take('/api/settings').resolve({theme:'light',browser:'default',bindings:{}}); await tick();
+  return h;
+}
+const press = (h, event) => h.documentEvents.keydown({target:h.elements.get('search'),preventDefault(){},...event});
+
+test('⌘-click opens the clicked row in a Firefox container, not the selected one', async()=>{
+  const h=await panel();
+  assert.equal(h.run('current().name'),'A');
+  h.run('rows[1].element').events.click({metaKey:true,detail:1});
+  const request=h.take('/api/console');
+  assert.equal(request.body.profile,'B'); assert.equal(request.body.browser,'firefox');
+});
+
+test('a plain click still switches to the clicked row, and ⌘⇧↵ is no longer bound', async()=>{
+  const h=await panel();
+  press(h,{key:'Enter',metaKey:true,shiftKey:true,preventDefault(){assert.fail('⌘⇧↵ is still bound');}});
+  assert.equal(h.requests.length,0);
+  h.run('rows[1].element').events.click({detail:1});
+  assert.equal(h.take('/api/profile/set').body.name,'B');
+});
+
+test('the default keys reach their actions on the selected profile', async()=>{
+  for (const [event,path,check] of [
+    [{key:'Enter'},'/api/profile/set',b=>b.name==='A'],
+    [{key:'Enter',metaKey:true},'/api/console',b=>b.profile==='A'&&b.browser===''],
+    [{key:'f',metaKey:true},'/api/console',b=>b.browser==='firefox'],
+    [{key:'t',ctrlKey:true},'/api/terminal',b=>b.profile==='A'],
+    [{key:'C',metaKey:true,shiftKey:true},'/api/copy',b=>b.text==='A'],
+    [{key:'k',metaKey:true},'/api/clear',b=>b.profile==='A'],
+  ]) {
+    const h=await panel(); let prevented=false;
+    press(h,{...event,preventDefault(){prevented=true;}});
+    assert.equal(prevented,true,JSON.stringify(event)); assert.ok(check(h.take(path).body),JSON.stringify(event));
+  }
+});
+
+test('bindings from the settings file replace the defaults they took over', async()=>{
+  const custom={profile:'A',profiles:[{name:'A'},{name:'B'}],bindings:{firefox:['Alt+Click'],terminal:['CmdOrCtrl+T','CmdOrCtrl+F']}};
+  let h=await panel(custom);
+  h.run('rows[1].element').events.click({metaKey:true,detail:1});
+  assert.equal(h.requests.length,0);
+  h.run('rows[1].element').events.click({altKey:true,detail:1});
+  assert.equal(h.take('/api/console').body.browser,'firefox');
+  h=await panel(custom); press(h,{key:'f',metaKey:true});
+  assert.equal(h.take('/api/terminal').body.profile,'A');
+});
+
+test('a hand-edited binding that would take a letter from the search field is ignored', async()=>{
+  const h=await panel({profile:'A',profiles:[{name:'A'}],bindings:{terminal:['A','CmdOrCtrl+T']}});
+  press(h,{key:'a',preventDefault(){assert.fail('took a letter from search');}});
+  assert.equal(h.requests.length,0);
+  assert.deepEqual(Array.from(h.run('bindings().terminal')),['CmdOrCtrl+T']);
+});
+
+test('the footer names the keys as they are bound now', async()=>{
+  assert.equal((await panel()).elements.get('hint').textContent,'↵ Switch · ⌘↵ Console · Right click for more');
+  const h=await panel({profile:'A',profiles:[{name:'A'}],bindings:{switch:['CmdOrCtrl+Shift+Enter'],console:[]}});
+  assert.equal(h.elements.get('hint').textContent,'⌘⇧↵ Switch · Right click for more');
+});
+
+test('recording a key moves it from the action that had it and stores only what changed', async()=>{
+  const h=await settingsOpen();
+  h.run('addButtons.get("terminal")').events.click({detail:1});
+  assert.equal(h.run('recordingAction'),'terminal');
+  press(h,{key:'c',metaKey:true});
+  assert.equal(h.run('recordingAction'),null);
+  assert.match(h.elements.get('bindingsNote').textContent,/⌘C moved here from “Copy the account id”/);
+  await tick(); const save=h.take('/api/settings');
+  assert.deepEqual(save.body.bindings,{copyAccount:[],terminal:['CmdOrCtrl+T','CmdOrCtrl+C']});
+  save.resolve(save.body); await tick();
+  assert.equal(h.run('actionFor("CmdOrCtrl+C").id'),'terminal');
+  assert.equal(h.elements.get('bindingsReset').hidden,false);
+});
+
+test('keys that belong to typing or moving around are refused, and Escape only cancels', async()=>{
+  const h=await settingsOpen(); h.run('startBinding("console")');
+  for (const [event,pattern] of [
+    [{key:'a'},/search field/],[{key:'A',shiftKey:true},/search field/],
+    [{key:'Tab'},/move around/],[{key:'ArrowDown'},/move through/],
+  ]) {
+    press(h,event);
+    assert.match(h.elements.get('bindingsNote').textContent,pattern);
+    assert.equal(h.run('recordingAction'),'console');
+  }
+  press(h,{key:'Escape'});
+  assert.equal(h.run('recordingAction'),null);
+  assert.equal(h.elements.get('settings').hidden,false);
+  await tick(); assert.equal(h.requests.length,0);
+});
+
+test('a click is recorded with its modifiers, but not a key press or the second half of a double click', async()=>{
+  const h=await settingsOpen(); const add=h.run('addButtons.get("copyName")');
+  add.events.click({detail:1}); add.events.click({detail:2}); add.events.click({detail:0});
+  await tick(); assert.equal(h.requests.length,0); assert.equal(h.run('recordingAction'),'copyName');
+  add.events.click({detail:1,altKey:true,shiftKey:true}); await tick();
+  assert.deepEqual(h.take('/api/settings').body.bindings,{copyName:['CmdOrCtrl+Shift+C','Alt+Shift+Click']});
+});
+
+test('a plain click on the recorder stops it instead of taking clicks away from the rows', async()=>{
+  const h=await settingsOpen(); const add=h.run('addButtons.get("terminal")');
+  add.events.click({detail:1}); assert.equal(h.run('recordingAction'),'terminal');
+  add.events.click({detail:1}); assert.equal(h.run('recordingAction'),null);
+  await tick(); assert.equal(h.requests.length,0);
+  const fixed=h.elements.get('bindings').children[0].children[1].children[0];
+  assert.equal(fixed.children[0].textContent,'Click'); assert.equal(fixed.children.length,1);
+});
+
+test('a click elsewhere stops recording', async()=>{
+  const h=await settingsOpen(); h.run('startBinding("clear")');
+  h.documentEvents.click({target:h.elements.get('themeSelect')});
+  assert.equal(h.run('recordingAction'),null);
+});
+
+test('removing a binding unbinds it, and restoring the defaults sends an empty set', async()=>{
+  const h=await settingsOpen();
+  const firefoxRow=h.elements.get('bindings').children[2], chips=firefoxRow.children[1].children;
+  assert.deepEqual(chips.slice(0,2).map(chip=>chip.children[0].textContent),['⌘Click','⌘F']);
+  chips[0].children[1].events.click(); await tick();
+  const save=h.take('/api/settings'); assert.deepEqual(save.body.bindings,{firefox:['CmdOrCtrl+F']});
+  save.resolve(save.body); await tick();
+  assert.equal(h.run('actionFor("CmdOrCtrl+Click")'),undefined);
+  h.elements.get('bindingsReset').events.click(); await tick();
+  const reset=h.take('/api/settings'); assert.deepEqual(reset.body.bindings,{});
+  reset.resolve(reset.body); await tick();
+  assert.equal(h.run('actionFor("CmdOrCtrl+Click").id'),'firefox'); assert.equal(h.elements.get('bindingsReset').hidden,true);
+});
+
+test('an unbound modified click does nothing, while a plain click still switches', async()=>{
+  const h=await panel({profile:'A',profiles:[{name:'A'},{name:'B'}],bindings:{switch:[]}});
+  h.run('rows[1].element').events.click({shiftKey:true,detail:1});
+  assert.equal(h.requests.length,0);
+  h.run('rows[1].element').events.click({detail:1});
+  assert.equal(h.take('/api/profile/set').body.name,'B');
+});
+
+test('a preference saved before the settings were read leaves the bindings alone', async()=>{
+  const h=await panel(); const saved=h.run('saveSettings({theme:"dark"})'); await tick();
+  const write=h.take('/api/settings'); assert.equal('bindings' in write.body,false);
+  write.resolve(write.body); await saved;
+});

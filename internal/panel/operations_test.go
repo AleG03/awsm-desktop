@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -135,7 +136,7 @@ func TestFailedSettingsWriteRestoresTheLiveShortcut(t *testing.T) {
 	if body["error"] == nil {
 		t.Fatal("failed save was not reported")
 	}
-	if live != previous || settings.Load() != previous {
+	if !reflect.DeepEqual(live, previous) || !reflect.DeepEqual(settings.Load(), previous) {
 		t.Fatal("failed save left a different shortcut registered")
 	}
 }

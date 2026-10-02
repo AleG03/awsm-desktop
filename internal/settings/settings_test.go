@@ -3,6 +3,7 @@ package settings
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -19,11 +20,14 @@ func isolate(t *testing.T) string {
 func TestRoundTrip(t *testing.T) {
 	isolate(t)
 
-	want := Settings{Shortcut: "CmdOrCtrl+Shift+A", Browser: "firefox", Theme: "dark"}
+	want := Settings{
+		Shortcut: "CmdOrCtrl+Shift+A", Browser: "firefox", Theme: "dark",
+		Bindings: map[string][]string{"firefox": {"CmdOrCtrl+Click"}, "terminal": {}},
+	}
 	if err := Save(want); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
-	if got := Load(); got != want {
+	if got := Load(); !reflect.DeepEqual(got, want) {
 		t.Errorf("got %+v, want %+v", got, want)
 	}
 }
@@ -31,7 +35,7 @@ func TestRoundTrip(t *testing.T) {
 func TestMissingFileGivesTheDefaults(t *testing.T) {
 	isolate(t)
 
-	if got := Load(); got != Default() {
+	if got := Load(); !reflect.DeepEqual(got, Default()) {
 		t.Errorf("got %+v, want the defaults %+v", got, Default())
 	}
 	if Default().Shortcut != "" {
@@ -53,7 +57,7 @@ func TestACorruptFileDoesNotStopTheApplication(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got := Load(); got != Default() {
+	if got := Load(); !reflect.DeepEqual(got, Default()) {
 		t.Errorf("got %+v, want the defaults", got)
 	}
 }
@@ -87,6 +91,52 @@ func TestAnUnknownBrowserFallsBackToTheDefaultOne(t *testing.T) {
 
 	if got := Load().Browser; got != "default" {
 		t.Errorf("got %q, want %q", got, "default")
+	}
+}
+
+func TestAnUnboundActionStaysUnbound(t *testing.T) {
+	// An empty list means the user took every binding off that action. Read
+	// back as missing, it would quietly bring the defaults back.
+	isolate(t)
+
+	if err := Save(Settings{Bindings: map[string][]string{"copyName": {}}}); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := Load().Bindings["copyName"]
+	if !ok || got == nil || len(got) != 0 {
+		t.Errorf("copyName is %#v (present: %v), want an empty list", got, ok)
+	}
+}
+
+func TestBindingsAreTidiedOnTheWayIn(t *testing.T) {
+	// The file is editable by hand, so stray whitespace, blanks and repeats
+	// are cleaned up rather than handed to the panel.
+	isolate(t)
+
+	path, _ := Path()
+	os.MkdirAll(filepath.Dir(path), 0700)
+	if err := os.WriteFile(path, []byte(`{"bindings":{
+		"firefox": [" CmdOrCtrl+Click ", "", "CmdOrCtrl+Click", "CmdOrCtrl+F"],
+		"  ": ["CmdOrCtrl+X"]
+	}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	want := map[string][]string{"firefox": {"CmdOrCtrl+Click", "CmdOrCtrl+F"}}
+	if got := Load().Bindings; !reflect.DeepEqual(got, want) {
+		t.Errorf("got %#v, want %#v", got, want)
+	}
+}
+
+func TestSavingDoesNotRewriteTheCallersBindings(t *testing.T) {
+	isolate(t)
+
+	mine := map[string][]string{"firefox": {" CmdOrCtrl+Click "}}
+	if err := Save(Settings{Bindings: mine}); err != nil {
+		t.Fatal(err)
+	}
+	if mine["firefox"][0] != " CmdOrCtrl+Click " {
+		t.Error("Save tidied the map it was given instead of a copy")
 	}
 }
 

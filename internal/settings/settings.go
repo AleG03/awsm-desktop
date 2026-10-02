@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -32,6 +33,16 @@ type Settings struct {
 	// is created, so a panel told to be light on a dark desktop has to paint an
 	// opaque background of its own instead.
 	Theme string `json:"theme"`
+
+	// Bindings are the keys and clicks the panel's actions answer to, by
+	// action: {"firefox": ["CmdOrCtrl+Click", "CmdOrCtrl+F"]}. Only the
+	// actions the user changed are here; the panel knows the defaults for the
+	// rest, so a default that improves reaches everyone who never touched it.
+	// An empty list is a choice too: that action has no binding at all.
+	//
+	// The actions and the meaning of each binding belong to the panel. Nothing
+	// on this side reads them, so they are stored as given.
+	Bindings map[string][]string `json:"bindings,omitempty"`
 }
 
 // Default is what a machine with no settings file behaves like.
@@ -111,5 +122,36 @@ func (s Settings) sane() Settings {
 	default:
 		s.Theme = "system"
 	}
+	s.Bindings = saneBindings(s.Bindings)
 	return s
+}
+
+// saneBindings trims each binding and drops blanks and repeats.
+//
+// A fresh map, because the caller's is shared with whoever handed it over. An
+// action left with nothing keeps its empty list, which means "unbound" rather
+// than "use the default".
+func saneBindings(bindings map[string][]string) map[string][]string {
+	if len(bindings) == 0 {
+		return nil
+	}
+	clean := make(map[string][]string, len(bindings))
+	for action, list := range bindings {
+		action = strings.TrimSpace(action)
+		if action == "" {
+			continue
+		}
+		kept := []string{}
+		for _, binding := range list {
+			binding = strings.TrimSpace(binding)
+			if binding != "" && !slices.Contains(kept, binding) {
+				kept = append(kept, binding)
+			}
+		}
+		clean[action] = kept
+	}
+	if len(clean) == 0 {
+		return nil
+	}
+	return clean
 }

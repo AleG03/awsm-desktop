@@ -37,6 +37,9 @@ const ui = {
   shortcutButton: el("shortcutButton"),
   shortcutClear: el("shortcutClear"),
   shortcutNote: el("shortcutNote"),
+  bindings: el("bindings"),
+  bindingsReset: el("bindingsReset"),
+  bindingsNote: el("bindingsNote"),
   themeSelect: el("themeSelect"),
   browserSelect: el("browserSelect"),
   loginCheckbox: el("loginCheckbox"),
@@ -61,6 +64,10 @@ let selected = 0;
 // Kept only for this app process, including when the panel is hidden.
 let selectedSession = "";
 let recording = false;
+// The action a binding is being recorded for, if one is.
+let recordingAction = null;
+// The bindings the user changed, by action. Whatever is missing is a default.
+let customBindings = {};
 let stateRequest = 0;
 let activeAction = null;
 let reloadAfterAction = false;
@@ -299,7 +306,15 @@ function buildRow(profile) {
     selected = rows.findIndex((r) => r.element === row);
     markSelected();
   });
-  row.addEventListener("click", () => activate(profile));
+  // A click acts on this row, not on the selection: the row under the pointer
+  // is the one that was clicked. A plain one always switches to it; one with
+  // modifiers does whatever it is bound to, and nothing if it is bound to
+  // nothing -- an unbound ⌘-click switching accounts would be a surprise.
+  row.addEventListener("click", (event) => {
+    const binding = clickBinding(event);
+    if (binding === "Click") activate(profile);
+    else actionFor(binding)?.run(profile);
+  });
   return row;
 }
 
@@ -328,12 +343,23 @@ function markSelected() {
 
 const current = () => rows[selected]?.profile;
 
-const KEY_HINT = "↵ Switch · ⌘↵ Console · Right click for more";
+// keyHint names the keys for the two things most people come here to do,
+// whatever they are bound to now. A key is preferred over a click, which the
+// footer has no need to teach.
+function keyHint() {
+  const all = bindings();
+  const first = (id) => all[id].find((b) => !isClick(b)) ?? all[id][0];
+  return [
+    first("switch") && `${pretty(first("switch"))} Switch`,
+    first("console") && `${pretty(first("console"))} Console`,
+    "Right click for more",
+  ].filter(Boolean).join(" · ");
+}
 
 function updateFooter(shown) {
   clearTimeout(hintTimer);
   ui.hint.textContent =
-    shown < state.profiles.length ? `${shown} of ${state.profiles.length} · ${KEY_HINT}` : KEY_HINT;
+    shown < state.profiles.length ? `${shown} of ${state.profiles.length} · ${keyHint()}` : keyHint();
 }
 
 // hint borrows the footer for a moment and then gives it back.
@@ -730,6 +756,8 @@ async function load({ duringAction = false } = {}) {
   // Keep the selected profile stable when the list changes under the pointer.
   const selectedName = current()?.name;
   state = { ...next, profiles: next.profiles || [] };
+  // Like the theme: a save in flight knows better than the state it overtook.
+  if (!pendingSettings) customBindings = state.bindings || {};
   updateSessionOptions();
   applyTheme(pendingSettings ? prefs.theme : state.theme);
   renderCurrent();
@@ -756,9 +784,11 @@ function showSettings(open) {
   ui.main.hidden = open;
   ui.settings.hidden = !open;
   if (open) {
+    renderBindings();
     loadSettings();
   } else {
     stopRecording();
+    stopBinding();
     ui.search.focus();
     // Settings can change what the main view has to say -- turning renewal on
     // is the reason this is here -- and coming back to a stale panel would
@@ -788,6 +818,8 @@ async function loadSettings() {
   ui.logPath.textContent = prefs.logPath || "";
   applyTheme(prefs.theme);
   renderShortcut();
+  customBindings = prefs.bindings ?? customBindings;
+  renderBindings();
 }
 
 // renderRenewal shows whether credentials are being renewed in the background.
@@ -875,18 +907,24 @@ function renderShortcut() {
   ui.shortcutClear.hidden = !set;
 }
 
-// pretty renders an accelerator the way a Mac menu would.
+const MAC = navigator.platform.startsWith("Mac");
+
+const SYMBOLS = {
+  CmdOrCtrl: "⌘", Ctrl: "⌃", Alt: "⌥", Shift: "⇧", Plus: "+",
+  Enter: "↵", Backspace: "⌫", Delete: "⌦",
+  ArrowUp: "↑", ArrowDown: "↓", ArrowLeft: "←", ArrowRight: "→",
+};
+
+// pretty renders an accelerator the way a Mac menu would, and elsewhere the way
+// Windows and Linux spell it.
 function pretty(accelerator) {
-  if (!navigator.platform.startsWith("Mac")) return accelerator;
-  return accelerator
-    .replace("CmdOrCtrl", "⌘")
-    .replace("Alt", "⌥")
-    .replace("Shift", "⇧")
-    .replace("Ctrl", "⌃")
-    .replaceAll("+", "");
+  const parts = accelerator.split("+");
+  if (!MAC) return parts.map((part) => (part === "CmdOrCtrl" ? "Ctrl" : part)).join("+");
+  return parts.map((part) => SYMBOLS[part] ?? part).join("");
 }
 
 function startRecording() {
+  stopBinding();
   recording = true;
   ui.shortcutButton.classList.add("recording");
   ui.shortcutButton.textContent = "Press a combination…";
@@ -927,6 +965,9 @@ function captureShortcut(event) {
   stopRecording();
 }
 
+// saveSettings accepts either the changes themselves or a function that works
+// them out from the last confirmed preferences, for a change that depends on
+// what is already there.
 function saveSettings(changes) {
   settingsRequest++;
   pendingSettings++;
@@ -934,9 +975,12 @@ function saveSettings(changes) {
   // Build the next payload only after the preceding save has settled. Rapid
   // changes are merged into the last confirmed preferences, never a stale copy.
   settingsQueue = settingsQueue.then(async () => {
+    // The bindings go only once they have been read. Go keeps the stored
+    // ones when they are missing, where {} would have thrown them all away.
     const next = {
       shortcut: prefs.shortcut || "", browser: prefs.browser || "default",
-      theme: prefs.theme || "system", openAtLogin: Boolean(prefs.openAtLogin), ...changes,
+      theme: prefs.theme || "system", openAtLogin: Boolean(prefs.openAtLogin), bindings: prefs.bindings,
+      ...(typeof changes === "function" ? changes(prefs) : changes),
     };
     try {
       prefs = await post("/api/settings", next);
@@ -951,6 +995,8 @@ function saveSettings(changes) {
       ui.browserSelect.value = prefs.browser || "default";
       ui.loginCheckbox.checked = Boolean(prefs.openAtLogin);
       renderShortcut();
+      customBindings = prefs.bindings ?? customBindings;
+      renderBindings();
     }
   });
   return settingsQueue;
@@ -961,12 +1007,276 @@ function clearActive() {
   if (profile) return run(() => post("/api/clear", { profile }), { doing: "Clearing the active profile" });
 }
 
+// --- bindings --------------------------------------------------------------
+
+// ACTIONS is everything a key or a click can do in the panel, with what each
+// answers to until the user says otherwise.
+//
+// A binding is written the way the global shortcut is, "CmdOrCtrl+Shift+C",
+// with Click in place of a key for the mouse. A key acts on the selected row
+// and a click on the row under the pointer.
+//
+// A plain click is not among them: it is how a row is chosen, and letting it be
+// moved meant a second click on the recorder -- the obvious way to stop
+// recording -- quietly turned every click on a profile into something else.
+//
+// None of these activates the profile except Switch: opening a console for an
+// account is not the same as starting to work in it.
+const ACTIONS = [
+  { id: "switch", label: "Switch to the profile", defaults: ["Enter"], fixed: ["Click"], run: (p) => activate(p) },
+  { id: "console", label: "Open the console, without switching", defaults: ["CmdOrCtrl+Enter"], run: (p) => openConsole(p) },
+  { id: "firefox", label: "Open it in a Firefox container", defaults: ["CmdOrCtrl+Click", "CmdOrCtrl+F"], run: (p) => openConsole(p, "firefox") },
+  { id: "copyAccount", label: "Copy the account id", defaults: ["CmdOrCtrl+C"], run: (p) => copy(p.account_id, "account id") },
+  { id: "copyName", label: "Copy the profile name", defaults: ["CmdOrCtrl+Shift+C"], run: (p) => copy(p.name, "profile name") },
+  { id: "terminal", label: "Open a terminal on that profile", defaults: ["CmdOrCtrl+T"], run: (p) => toTerminal(p.name) },
+  // Clear is the one action that has nothing to do with the selection: it acts
+  // on whatever is active, which is what the panel shows at the top.
+  { id: "clear", label: "Clear the active profile", defaults: ["CmdOrCtrl+K"], anyProfile: true, run: () => clearActive() },
+];
+
+const BINDINGS_NOTE =
+  "Press + and then a combination. To bind a click, click + again holding ⌘, ⌥ or ⇧.";
+
+// bindingsFrom is what every action answers to: the user's own list where there
+// is one, and otherwise the defaults -- less any the user has since given to a
+// different action, so that one combination never means two things.
+//
+// The settings file can be edited by hand, so what it says is held to the same
+// rules as recording: a plain "A" in there would otherwise make the letter
+// impossible to type into the search field.
+function bindingsFrom(custom) {
+  const own = (a) => custom[a.id].filter((b) => typeof b === "string" && !refusal(b));
+  const chosen = ACTIONS.filter((a) => Array.isArray(custom[a.id]));
+  const taken = new Set(chosen.flatMap(own));
+  return Object.fromEntries(ACTIONS.map((a) => [
+    a.id,
+    Array.isArray(custom[a.id]) ? own(a) : a.defaults.filter((b) => !taken.has(b)),
+  ]));
+}
+
+const bindings = () => bindingsFrom(customBindings);
+
+function actionFor(binding) {
+  if (!binding) return undefined;
+  const all = bindings();
+  return ACTIONS.find((a) => all[a.id].includes(binding));
+}
+
+// overridesOf keeps only the actions that differ from their defaults, so that
+// a default changed in a later version reaches every action nobody touched.
+function overridesOf(all) {
+  return Object.fromEntries(ACTIONS
+    .filter((a) => all[a.id].join(" ") !== a.defaults.join(" "))
+    .map((a) => [a.id, all[a.id]]));
+}
+
+function modifiers(event) {
+  const parts = [];
+  if (event.metaKey || event.ctrlKey) parts.push("CmdOrCtrl");
+  if (event.altKey) parts.push("Alt");
+  if (event.shiftKey) parts.push("Shift");
+  return parts;
+}
+
+// keyName names the key the way a binding writes it.
+//
+// The letter comes from the physical key when the character does not say what
+// it is: on a Mac ⌥C types "ç", and ⇧1 types "!".
+function keyName(event) {
+  const key = event.key || "";
+  if (/^[a-z0-9]$/i.test(key)) return key.toUpperCase();
+  const physical = /^(?:Key([A-Z])|Digit([0-9]))$/.exec(event.code || "");
+  if (physical) return physical[1] || physical[2];
+  if (key === " ") return "Space";
+  if (key === "+") return "Plus";
+  return key.length === 1 ? key.toUpperCase() : key;
+}
+
+function keyBinding(event) {
+  if (!event.key || ["Shift", "Control", "Alt", "Meta", "CapsLock", "Fn"].includes(event.key)) return "";
+  return [...modifiers(event), keyName(event)].join("+");
+}
+
+const clickBinding = (event) => [...modifiers(event), "Click"].join("+");
+const isClick = (binding) => binding.split("+").pop() === "Click";
+
+// refusal says why a binding cannot be had, or nothing when it can.
+//
+// Escape, Tab and the arrows are how the panel is moved through and got out of,
+// recording included. And a key that would type into the search field needs ⌘,
+// ⌃ or ⌥, or every profile with that letter in its name would become something
+// you could no longer search for.
+function refusal(binding) {
+  if (binding === "Click") return "A plain click switches to the profile. Hold ⌘, ⌥ or ⇧.";
+  if (isClick(binding)) return "";
+  const parts = binding.split("+");
+  const key = parts.pop();
+  if (key === "Escape" || key === "Tab") return `${pretty(key)} is how you move around the panel.`;
+  if (key === "Dead" || key === "Unidentified" || key === "Process") {
+    return "That key cannot be told apart from others. Try another.";
+  }
+  if (parts.includes("CmdOrCtrl") || parts.includes("Alt")) return "";
+  if (key === "Enter" || /^F\d+$/.test(key)) return "";
+  if ((key === "ArrowUp" || key === "ArrowDown") && parts.length === 0) {
+    return "↑ and ↓ move through the profiles.";
+  }
+  return `${pretty(binding)} belongs to the search field. Add ⌘, ⌃ or ⌥.`;
+}
+
+// The add buttons, by action, so that recording can be shown on them without
+// rebuilding the list -- which would take the focus away from a keyboard user
+// in the middle of choosing.
+let addButtons = new Map();
+
+function renderBindings() {
+  const all = bindings();
+  const refocus = document.activeElement?.dataset?.bindingAction;
+  addButtons = new Map();
+  ui.bindings.replaceChildren(...ACTIONS.map((action) => bindingRow(action, all[action.id])));
+  ui.bindingsReset.hidden = !ACTIONS.some((a) => Array.isArray(customBindings[a.id]));
+  markRecording();
+  if (refocus) addButtons.get(refocus)?.focus();
+}
+
+function bindingRow(action, list) {
+  const row = document.createElement("div");
+  row.className = "binding-row";
+
+  const label = document.createElement("span");
+  label.className = "binding-label";
+  label.textContent = action.label;
+
+  const keys = document.createElement("span");
+  keys.className = "binding-keys";
+  for (const binding of action.fixed || []) {
+    const chip = document.createElement("span");
+    chip.className = "binding fixed";
+    chip.title = "Always";
+    const kbd = document.createElement("kbd");
+    kbd.textContent = pretty(binding);
+    chip.append(kbd);
+    keys.append(chip);
+  }
+  for (const binding of list) {
+    const chip = document.createElement("span");
+    chip.className = "binding";
+    const kbd = document.createElement("kbd");
+    kbd.textContent = pretty(binding);
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "binding-remove";
+    remove.textContent = "×";
+    remove.title = `Remove ${pretty(binding)}`;
+    remove.setAttribute("aria-label", `Remove ${pretty(binding)} from ${action.label}`);
+    remove.dataset.bindingAction = action.id;
+    remove.addEventListener("click", () => removeBinding(action.id, binding));
+    chip.append(kbd, remove);
+    keys.append(chip);
+  }
+
+  const add = document.createElement("button");
+  add.type = "button";
+  add.className = "binding-add";
+  add.setAttribute("aria-label", `Add a binding to ${action.label}`);
+  add.dataset.bindingAction = action.id;
+  add.addEventListener("click", (event) => {
+    if (recordingAction !== action.id) {
+      startBinding(action.id);
+      return;
+    }
+    // Return or space on the focused button arrives here as a click with no
+    // pointer behind it (detail 0), after the keydown handler has dealt with
+    // the key. The second click of a double click (detail 2) is the first one
+    // repeated, not a click anyone meant to bind.
+    if (event.detail !== 1) return;
+    // A plain click stops, as it does on the panel shortcut's recorder.
+    const binding = clickBinding(event);
+    if (binding === "Click") stopBinding();
+    else recordBinding(binding);
+  });
+  addButtons.set(action.id, add);
+  keys.append(add);
+
+  row.append(label, keys);
+  return row;
+}
+
+function markRecording() {
+  for (const [id, button] of addButtons) {
+    const on = id === recordingAction;
+    button.classList.toggle("recording", on);
+    button.textContent = on ? "Press keys or click…" : "+";
+  }
+}
+
+function startBinding(id) {
+  stopRecording();
+  recordingAction = id;
+  ui.bindingsNote.textContent = "Press a combination, or click here holding ⌘, ⌥ or ⇧. Escape cancels.";
+  markRecording();
+}
+
+function stopBinding(note = BINDINGS_NOTE) {
+  recordingAction = null;
+  ui.bindingsNote.textContent = note;
+  markRecording();
+}
+
+// recordBinding adds a binding to the action being recorded.
+//
+// A binding another action had is moved rather than refused, and the note says
+// where it came from: refusing would turn swapping two of them into a puzzle.
+function recordBinding(binding) {
+  const id = recordingAction;
+  if (!id || !binding) return;
+  const why = refusal(binding);
+  if (why) {
+    ui.bindingsNote.textContent = why;
+    return;
+  }
+  const all = bindings();
+  if (all[id].includes(binding)) {
+    stopBinding(`${pretty(binding)} already does that.`);
+    return;
+  }
+  const owner = ACTIONS.find((a) => all[a.id].includes(binding));
+  stopBinding(owner ? `${pretty(binding)} moved here from “${owner.label}”.` : BINDINGS_NOTE);
+  saveBindings((next) => {
+    for (const a of ACTIONS) next[a.id] = next[a.id].filter((b) => b !== binding);
+    next[id].push(binding);
+  });
+}
+
+function removeBinding(id, binding) {
+  stopBinding();
+  saveBindings((next) => {
+    next[id] = next[id].filter((b) => b !== binding);
+  });
+}
+
+// saveBindings applies an edit to the bindings as last confirmed, inside the
+// settings queue, so that two edits in quick succession build on each other
+// rather than the second undoing the first.
+function saveBindings(edit) {
+  return saveSettings((confirmed) => {
+    const next = bindingsFrom(confirmed.bindings ?? customBindings);
+    edit(next);
+    return { bindings: overridesOf(next) };
+  });
+}
+
 // --- keyboard --------------------------------------------------------------
 
 document.addEventListener("keydown", (event) => {
   if (recording) {
     event.preventDefault();
     captureShortcut(event);
+    return;
+  }
+  if (recordingAction) {
+    event.preventDefault();
+    if (event.key === "Escape") stopBinding();
+    else recordBinding(keyBinding(event));
     return;
   }
   if (!ui.settings.hidden) {
@@ -1016,58 +1326,28 @@ document.addEventListener("keydown", (event) => {
   }
 
   if (event.target.closest?.("button, select, input:not(#search), textarea")) return;
+
+  // With nothing selected, a bound key is left to do what it would have done
+  // anyway: ⌘C still copies the search text when there is no profile to copy.
+  const action = actionFor(keyBinding(event));
   const profile = current();
-  const command = event.metaKey || event.ctrlKey;
-
-  // Clear is the one action that has nothing to do with the selection: it acts
-  // on whatever is active, which is what the panel shows at the top.
-  if (command && event.key.toLowerCase() === "k") {
+  if (action && (profile || action.anyProfile)) {
     event.preventDefault();
-    if (state.profile) {
-      clearActive();
-    }
+    action.run(profile);
     return;
-  }
-
-  // Everything below acts on the selected profile. None of it activates the
-  // profile except Enter on its own: opening a console for an account is not
-  // the same as starting to work in it.
-
-  if (profile && event.key === "Enter") {
-    event.preventDefault();
-    if (command) {
-      openConsole(profile, event.shiftKey ? "firefox" : undefined);
-    } else {
-      activate(profile);
-    }
-    return;
-  }
-
-  if (profile && command) {
-    switch (event.key.toLowerCase()) {
-      case "c":
-        event.preventDefault();
-        if (event.shiftKey) {
-          copy(profile.name, "profile name");
-        } else {
-          copy(profile.account_id, "account id");
-        }
-        return;
-      case "t":
-        event.preventDefault();
-        toTerminal(profile.name);
-        return;
-      case "f":
-        event.preventDefault();
-        openConsole(profile, "firefox");
-        return;
-    }
   }
 
   // Any other key belongs in the search field, wherever the focus is.
-  if (!command && document.activeElement !== ui.search && event.key.length === 1) {
+  const command = event.metaKey || event.ctrlKey;
+  if (!action && !command && document.activeElement !== ui.search && event.key.length === 1) {
     ui.search.focus();
   }
+});
+
+// A click anywhere but the button being recorded on stops the recording, so a
+// key pressed afterwards for some other reason is not taken as the binding.
+document.addEventListener("click", (event) => {
+  if (recordingAction && event.target !== addButtons.get(recordingAction)) stopBinding();
 });
 
 // --- wiring ----------------------------------------------------------------
@@ -1102,6 +1382,10 @@ ui.settingsButton.addEventListener("click", () => showSettings(true));
 ui.backButton.addEventListener("click", () => showSettings(false));
 ui.shortcutButton.addEventListener("click", () => (recording ? stopRecording() : startRecording()));
 ui.shortcutClear.addEventListener("click", () => saveSettings({ shortcut: "" }));
+ui.bindingsReset.addEventListener("click", () => {
+  stopBinding();
+  saveSettings({ bindings: {} });
+});
 ui.themeSelect.addEventListener("change", () => saveSettings({ theme: ui.themeSelect.value }));
 ui.browserSelect.addEventListener("change", () => saveSettings({ browser: ui.browserSelect.value }));
 ui.loginCheckbox.addEventListener("change", () =>

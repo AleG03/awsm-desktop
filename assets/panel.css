@@ -481,23 +481,97 @@ footer {
   color: var(--dim);
 }
 
+.keys-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 28px;
+}
+
 .keys-title {
   font-weight: 600;
   color: var(--text);
-  margin-bottom: 2px;
 }
 
-.keys > div {
+.bindings {
+  display: grid;
+  gap: 5px;
+}
+
+.binding-row {
   display: flex;
+  align-items: center;
   gap: 10px;
-  align-items: baseline;
+  min-height: 24px;
 }
 
-.keys kbd {
+.binding-label {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Right aligned and allowed to wrap, so a third binding or the recording
+   prompt pushes onto a second line instead of squeezing the label. */
+.binding-keys {
   flex: none;
-  width: 42px;
-  font: inherit;
+  max-width: 58%;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 4px;
+}
+
+.binding {
+  display: inline-flex;
+  align-items: center;
+  background: var(--field);
+  border-radius: 6px;
+  padding-left: 7px;
   color: var(--text);
+  white-space: nowrap;
+}
+
+.binding.fixed {
+  padding-right: 7px;
+  min-height: 22px;
+}
+
+.binding kbd {
+  font: inherit;
+}
+
+.binding-remove,
+.binding-add {
+  border: none;
+  background: transparent;
+  color: var(--faint);
+  font-size: 12px;
+  border-radius: 6px;
+  cursor: default;
+  white-space: nowrap;
+}
+
+.binding-remove {
+  padding: 3px 6px 3px 4px;
+  line-height: 1;
+}
+
+.binding-add {
+  min-width: 24px;
+  min-height: 22px;
+  padding: 2px 7px;
+  background: var(--field);
+}
+
+.binding-remove:hover,
+.binding-add:hover {
+  color: var(--text);
+}
+
+.binding-add.recording {
+  color: var(--text);
+  box-shadow: 0 0 0 2px var(--accent);
 }
 
 .keys-note {

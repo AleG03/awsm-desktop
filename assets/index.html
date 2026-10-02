@@ -145,18 +145,26 @@
           Check for a newer release. Updates are installed manually.
         </p>
 
+        <!-- Filled from the list of actions in panel.js. Keys act on the
+             selected profile, clicks on the one clicked. -->
         <div class="keys">
-          <div class="keys-title">Keyboard shortcuts</div>
-          <div><kbd>↵</kbd><span>Switch to the profile</span></div>
-          <div><kbd>⌘↵</kbd><span>Open the console, without switching</span></div>
-          <div><kbd>⌘⇧↵</kbd><span>Open it in a Firefox container</span></div>
-          <div><kbd>⌘F</kbd><span>Open a Firefox container</span></div>
-          <div><kbd>⌘C</kbd><span>Copy the account id</span></div>
-          <div><kbd>⌘⇧C</kbd><span>Copy the profile name</span></div>
-          <div><kbd>⌘T</kbd><span>Open a terminal on that profile</span></div>
-          <div><kbd>⌘K</kbd><span>Clear the active profile</span></div>
-          <div><kbd>Esc</kbd><span>Clear search, then session filter, then close</span></div>
+          <div class="keys-header">
+            <span class="keys-title">Keys and clicks</span>
+            <button class="quiet" id="bindingsReset" type="button" hidden>Restore defaults</button>
+          </div>
+          <div class="bindings" id="bindings"></div>
+          <div class="binding-row">
+            <span class="binding-label">Move through the profiles</span>
+            <span class="binding-keys"><span class="binding fixed"><kbd>↑ ↓</kbd></span></span>
+          </div>
+          <div class="binding-row">
+            <span class="binding-label">Clear search, then session filter, then close</span>
+            <span class="binding-keys"><span class="binding fixed"><kbd>Esc</kbd></span></span>
+          </div>
         </div>
+        <p class="field-note keys-note" id="bindingsNote">
+          Press + and then a combination. To bind a click, click + again holding ⌘, ⌥ or ⇧.
+        </p>
 
         <p class="field-note keys-note">
           Right click any profile for more actions. Right click the active
