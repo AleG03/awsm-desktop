@@ -54,6 +54,43 @@ interface: edit, reload, and use the browser's developer tools.
 
 ## Using it
 
+Each profile is a row of four columns: its **SSO session**, its **account**,
+its **permission set** and its **region**. The full profile name is in the
+row's tooltip.
+
+awsm learns each account's name from IAM Identity Center when `awsm sso update`
+writes the profiles, but keeps it nowhere except inside the profile name, which
+it builds as `session-account-role`. Every part is lowercased, and any character
+outside `a-z0-9-` becomes a hyphen. It adds `-<account id>` when two names would
+collide. The panel takes the session and the permission set back off either end,
+which leaves the account. That gives `acme-production`, not "Acme Production":
+the cleaned form is all that survives. A profile not named that way (written by
+hand, a static key, or a role assumed from another profile) has no account name
+to recover, so its profile name stands in that column instead.
+
+**The panel is as wide as its longest names.** No session, account,
+permission set or region is wrapped or cut short. Once the profiles are in, the
+page lays out a copy of every session and every row off screen, unwrapped and in
+the panel's own styles, and measures them. Each column is as wide as its longest
+value and the pane as wide as its longest session. The page then asks for a
+window that holds all of that.
+
+- It measures every profile, not just the rows a search leaves on screen, so the
+  window doesn't change width as you type.
+- It measures again only when the profiles change (or the scroll bar changes
+  between floating and taking room), so reopening the panel doesn't resize it.
+- Room for the **Active** badge is kept on every row, so switching profiles
+  doesn't resize it either.
+- When the panel opens wider than its names need (it is never narrower than 440
+  points), the spare width is shared out between the columns.
+
+The screen is the one limit. If the names need more width than the screen has,
+the panel stops 16 points short of the screen's edges, and the columns share
+what there is and wrap. Long accounts wrap at their hyphens, and long permission
+sets between their words (`RepositoriesAndPipelines` / `Access`). Long session
+names are cut short, because the whole name is in the group heading just above
+and in the session pane.
+
 | | |
 |---|---|
 | Type | filter, by any part of a name, session, region or account — terms may be in any order |
@@ -89,12 +126,9 @@ The **session pane** on the left limits the list to one SSO session, including
 recent profiles. Search further narrows that session's results. The pane lists
 the sessions alphabetically under **All sessions**, each with how many of its
 profiles match the current search, so you can see where a search found things
-before going there; a session with no matches is dimmed. Long names are cut
-short, with the whole name in the tooltip. The pane appears only when it can
-narrow the list. Profiles without an SSO session appear under **All sessions**.
-
-The pane does not come out of the list's width: the window is wider by the
-pane's width instead, so long profile names still fit on one line.
+before going there; a session with no matches is dimmed. The pane is as wide
+as its longest session (see above), and appears only when it can narrow the
+list. Profiles without an SSO session appear under **All sessions**.
 
 Clicking a session keeps your search text, selects the first result and returns
 focus to search. It leaves credentials and the active profile unchanged; the
@@ -410,12 +444,15 @@ endpoints through it cost nothing.
 
 ## Continuous integration
 
-[`.github/workflows/build.yml`](.github/workflows/build.yml) runs on pull requests,
-version tags and manual dispatches. Branch pushes, including pushes to `main`,
-do not trigger it. Pull requests check formatting, run `go vet`, Go tests with
-the race detector, JavaScript behavior tests and a Windows cross-compile.
-The bundle is built only on version tags or manual dispatches, after those
-checks pass. Only version tags publish a release.
+[`.github/workflows/build.yml`](.github/workflows/build.yml) runs only when a
+version tag (`v*`) is pushed. Pull requests and branch pushes, including pushes
+to `main`, do not trigger it. It checks formatting, runs `go vet`, Go tests with
+the race detector, JavaScript behavior tests and a Windows cross-compile. If
+those pass, it builds the bundle and publishes it as a release named after the
+tag.
+
+Because nothing checks a change before it is tagged, run `make test` before
+merging.
 
 `make test` needs Node.js 22+ for the dependency-free tests in `tests/`, and Go.
 The JavaScript tests execute the shipped script with controlled HTTP completion

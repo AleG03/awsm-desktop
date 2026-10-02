@@ -41,21 +41,24 @@ var assets embed.FS
 var version string
 
 const (
-	// listWidth is wide enough for nine names out of ten on a single line.
-	// Measured against the 304 profiles this was built for: 400 points wraps
-	// 80 of them, 440 wraps 31, and past that the curve flattens while the
-	// panel keeps growing. The rest wrap rather than being cut short, because
-	// the name is the only thing that tells two profiles apart.
-	listWidth = 440
-
-	// sessionsWidth is the SSO session pane beside the list, and has to match
-	// --sessions-width in assets/panel.css. The window is wider by that much
-	// rather than the list narrower: taking it out of the list would undo the
-	// measurement above.
-	sessionsWidth = 180
-
-	panelWidth  = listWidth + sessionsWidth
+	// panelWidth is the width the panel starts at, and keeps only until the
+	// page has measured its names: the page then asks for whatever its
+	// longest session, account, permission set and region need to fit on one
+	// line each (see fitWidth). This is roughly what that came to for the 265
+	// profiles it was built against, so the first opening does not jump.
+	panelWidth  = 740
 	panelHeight = 540
+
+	// minPanelWidth is as narrow as the panel goes however short the names:
+	// about what the header, the search field and the settings need.
+	minPanelWidth = 440
+
+	// screenMargin keeps a panel the names would make wider than the screen
+	// from running to its edges.
+	screenMargin = 16
+
+	// trayOffset is the gap between the status bar and the panel.
+	trayOffset = 5
 
 	// sessionChanged is emitted to the page when the active session changes
 	// underneath it.
@@ -212,7 +215,26 @@ func main() {
 	// AttachWindow is what makes this a popover rather than a floating window:
 	// the tray positions it against the icon and wires left click to toggle it,
 	// right click to the menu.
-	tray.AttachWindow(window).WindowOffset(5)
+	tray.AttachWindow(window).WindowOffset(trayOffset)
+
+	// The page measures its longest names and asks for the width they need.
+	// The tray only places the panel against its icon when it opens it, so a
+	// panel resized while open is placed again; one resized while hidden is
+	// placed when it next opens.
+	server.OnResize(func(width int) (int, error) {
+		screen := 0
+		if on, err := window.GetScreen(); err == nil && on != nil {
+			screen = on.WorkArea.Width
+		}
+		width = fitWidth(width, screen)
+		window.SetSize(width, panelHeight)
+		if window.IsVisible() {
+			if err := tray.PositionWindow(window, trayOffset); err != nil {
+				log.Debug("could not place the resized panel", "error", err)
+			}
+		}
+		return width, nil
+	})
 
 	tray.SetMenu(buildMenu(app))
 	buildRowMenu(app, server, window, log)
@@ -471,6 +493,17 @@ func buildMenu(app *application.App) *application.Menu {
 	menu := app.NewMenu()
 	menu.Add("Quit awsm").OnClick(func(*application.Context) { app.Quit() })
 	return menu
+}
+
+// fitWidth keeps the width the page asked for within what the panel and the
+// screen allow. A screen of zero is one that could not be read, and limits
+// nothing. The page is told what it got, and when that is less than it asked
+// for, it lets the longest names wrap instead.
+func fitWidth(wanted, screen int) int {
+	if screen > 0 && wanted > screen-2*screenMargin {
+		wanted = screen - 2*screenMargin
+	}
+	return max(wanted, minPanelWidth)
 }
 
 // shortcut owns the one system wide accelerator this application registers.

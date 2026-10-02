@@ -44,6 +44,13 @@ func main() {
 		return nil
 	})
 
+	// There is no window to resize here. The width the page asks for is
+	// printed instead; size the browser to it to see what the panel will.
+	server.OnResize(func(width int) (int, error) {
+		log.Printf("would resize the panel to %d", width)
+		return width, nil
+	})
+
 	log.Printf("panel on http://%s (assets read from ./assets)", address)
 	log.Fatal(http.ListenAndServe(address, server.Handler()))
 }

@@ -274,6 +274,7 @@ function render() {
   // Every match is rendered: three hundred rows is nothing for a browser to
   // lay out, and the point of the panel is that everything is reachable.
   const recents = loadRecents();
+  ui.list.append(columnHeadings());
 
   if (searchTerms().length === 0) {
     const recent = recents.map((name) => found.find((p) => p.name === name)).filter(Boolean);
@@ -322,20 +323,71 @@ function appendGroup(title, profiles) {
   }
 }
 
-function buildRow(profile) {
-  const row = document.createElement("div");
-  row.className = "row";
-  row.id = `profile-${rows.length}`;
-  row.setAttribute("role", "option");
-  row.setAttribute("aria-label", [profile.name, profile.name === state.profile && "Active", profile.sso_session, profile.region].filter(Boolean).join(" · "));
-  row.title = [profile.name, profile.sso_session, profile.account_id, profile.type]
-    .filter(Boolean)
-    .join(" · ");
+// clean is what awsm does to a name before putting it in a profile name:
+// lowercase, and anything outside [a-z0-9-] turned into a hyphen.
+const clean = (text) => text.toLowerCase().replace(/[^a-z0-9-]/g, "-");
 
-  const name = document.createElement("div");
-  name.className = "row-name";
-  name.textContent = profile.name;
-  if (profile.name === state.profile) name.append(badge("Active"));
+// accountName recovers the account's name from the profile name.
+//
+// awsm knows it when it writes the profiles, from IAM Identity Center, but keeps
+// it nowhere except in the name: `awsm sso update` writes session-account-role,
+// each cleaned as above, with -<account id> (and -2, -3...) added when two would
+// collide. The session and the role are in the profile too, so taking them off
+// either end leaves the account -- in its cleaned form, "acme-prod" rather than
+// "Acme Prod", which is the most that survives.
+//
+// Empty for any profile not named that way: one written by hand, a static key,
+// or a role assumed from another profile.
+function accountName(profile) {
+  const { name = "", sso_session: session, sso_role_name: role } = profile;
+  if (!session || !role) return "";
+  let base = name;
+  const id = profile.sso_account_id || profile.account_id;
+  const at = id ? base.lastIndexOf(`-${id}`) : -1;
+  if (at > 0 && /^(?:-\d+)?$/.test(base.slice(at + id.length + 1))) base = base.slice(0, at);
+  const prefix = `${clean(session)}-`;
+  const suffix = `-${clean(role)}`;
+  if (base.length <= prefix.length + suffix.length) return "";
+  if (!base.startsWith(prefix) || !base.endsWith(suffix)) return "";
+  return base.slice(prefix.length, -suffix.length);
+}
+
+const COLUMNS = ["SSO session", "Account", "Permission set", "Region"];
+
+// columnHeadings names the columns, at the top of the list and inside it, so
+// that it shares the rows' width exactly -- a scroll bar that takes space would
+// otherwise push the rows out of line with headings sitting above the list.
+function columnHeadings() {
+  const headings = document.createElement("div");
+  headings.className = "columns";
+  headings.setAttribute("aria-hidden", "true");
+  headings.append(...COLUMNS.map((label) => cell("", label)));
+  return headings;
+}
+
+// wordBreaks lets a CamelCase name wrap between its words. A permission set is
+// usually one long word -- RepositoriesAndPipelinesAccess -- which otherwise
+// can only break wherever the column runs out, mid-word. The zero-width space
+// is invisible and only the screen ever reads it: search and the actions use
+// the profile, not the page.
+const wordBreaks = (text) =>
+  text.replace(/([a-z\d])(?=[A-Z])/g, "$1\u200B").replace(/([A-Z])(?=[A-Z][a-z])/g, "$1\u200B");
+
+function cell(className, text) {
+  const element = document.createElement("div");
+  element.className = className ? `cell ${className}` : "cell";
+  element.textContent = text;
+  return element;
+}
+
+// rowCells builds a row's four cells, in the order of COLUMNS.
+//
+// The account is the column that tells rows apart, so a profile whose account
+// cannot be read off its name shows the name there instead of leaving its most
+// important cell empty.
+function rowCells(profile, { active }) {
+  const name = cell("row-name", accountName(profile) || profile.name);
+  if (active) name.append(badge("Active"));
   if (profile.mfa_serial) {
     // Switching to this one cannot happen in the panel, so say so before the
     // click rather than after it.
@@ -343,12 +395,30 @@ function buildRow(profile) {
     mfa.title = "Needs a code typed in a terminal";
     name.append(mfa);
   }
+  return [
+    cell("row-session", profile.sso_session || ""),
+    name,
+    cell("row-role", wordBreaks(profile.sso_role_name || "")),
+    cell("row-region", profile.region || ""),
+  ];
+}
 
-  const region = document.createElement("div");
-  region.className = "row-region";
-  region.textContent = profile.region || "";
+function buildRow(profile) {
+  const row = document.createElement("div");
+  row.className = "row";
+  row.id = `profile-${rows.length}`;
+  row.setAttribute("role", "option");
 
-  row.append(name, region);
+  const active = profile.name === state.profile;
+  row.setAttribute("aria-label", [
+    accountName(profile) || profile.name, active && "Active", profile.sso_session, profile.sso_role_name, profile.region,
+  ].filter(Boolean).join(" · "));
+  // The whole profile name lives here now that no column shows it.
+  row.title = [profile.name, profile.sso_session, profile.account_id, profile.type]
+    .filter(Boolean)
+    .join(" · ");
+
+  row.append(...rowCells(profile, { active }));
 
   // Wails reads these two custom properties when the right button goes down,
   // and hands the data to the native menu. Because the row itself carries the
@@ -435,6 +505,102 @@ function hint(message) {
   clearTimeout(hintTimer);
   ui.hint.textContent = message;
   hintTimer = setTimeout(() => updateFooter(visibleProfiles().length), HINT_TIME);
+}
+
+// --- fitting the window ----------------------------------------------------
+
+// The window is as wide as its longest names need, so that none is wrapped or
+// cut short: the session pane as wide as its longest session, and each column
+// as wide as its longest value.
+//
+// Measured from every profile and every session, not from the rows a search
+// happens to leave on screen -- or the window would change width with each
+// key typed -- and measured again only when those change. Room for the Active
+// badge is kept on every row, so that switching profile does not resize it
+// either.
+
+// fittedTo is what the window was last fitted to.
+let fittedTo = "";
+
+function fitWindow() {
+  // The scroll bar is in it because macOS lets it change between one that
+  // floats over the list and one that takes room from it.
+  const key = JSON.stringify([ui.sessions.hidden, scrollBar(), state.profiles.map((p) =>
+    [p.name, p.sso_session, p.sso_role_name, p.region, Boolean(p.mfa_serial)])]);
+  if (key === fittedTo || state.profiles.length === 0) return;
+  fittedTo = key;
+  const sizes = measure();
+  sizeColumns(sizes, sizes.window);
+  post("/api/resize", { width: sizes.window })
+    .then((answer) => {
+      if (answer.width !== sizes.window) sizeColumns(sizes, answer.width);
+    })
+    // Asked again on the next load, rather than settling for a width that
+    // was never applied.
+    .catch(() => { fittedTo = ""; });
+}
+
+// measure lays copies of every session and of every profile's cells out off
+// screen, unwrapped and in the panel's own styles, and reads how wide each has
+// to be. The pane's copies are all drawn as the chosen one, which is bold, and
+// so the widest a name ever gets.
+function measure() {
+  const totals = new Map();
+  for (const profile of state.profiles) {
+    if (profile.sso_session) totals.set(profile.sso_session, (totals.get(profile.sso_session) || 0) + 1);
+  }
+  const sessions = sessionButtons.map(({ session }) => {
+    const copy = sessionButton(session);
+    copy.count.textContent = String(session ? totals.get(session) || 0 : state.profiles.length);
+    copy.element.classList.add("chosen");
+    return copy.element;
+  });
+  const lines = [columnHeadings(), ...state.profiles.map((profile) => {
+    const line = document.createElement("div");
+    line.className = "row";
+    line.append(...rowCells(profile, { active: true }));
+    return line;
+  })];
+
+  const box = document.createElement("div");
+  box.className = "measure";
+  box.setAttribute("aria-hidden", "true");
+  box.append(...sessions, ...lines);
+  document.body.append(box);
+  try {
+    const width = (element) => element.getBoundingClientRect().width;
+    const columns = COLUMNS.map((_, i) => Math.ceil(Math.max(...lines.map((line) => width(line.children[i])))));
+    const pane = ui.sessions.hidden ? 0 :
+      Math.ceil(Math.max(...sessions.map(width)) + across(ui.sessions, { borders: true }));
+    const gaps = (parseFloat(getComputedStyle(lines[1]).columnGap) || 0) * (COLUMNS.length - 1);
+    const list = Math.ceil(columns.reduce((a, b) => a + b, 0) + gaps + across(lines[1]) + across(ui.list) + scrollBar());
+    return { pane, columns, list, window: pane + list };
+  } finally {
+    box.remove();
+  }
+}
+
+// scrollBar is the room the list's scroll bar takes from the columns: none
+// for one that floats over the list. Reserved by scrollbar-gutter, so it is
+// the same whether or not the list overflows.
+const scrollBar = () => (ui.list.offsetWidth - ui.list.clientWidth) || 0;
+
+// across is an element's padding on both sides, and its borders if asked.
+function across(element, { borders = false } = {}) {
+  const style = getComputedStyle(element);
+  const sum = (...names) => names.reduce((total, name) => total + (parseFloat(style[name]) || 0), 0);
+  return sum("paddingLeft", "paddingRight") + (borders ? sum("borderLeftWidth", "borderRightWidth") : 0);
+}
+
+// sizeColumns gives each column at least its longest value, and shares any
+// width to spare -- the panel has a minimum -- in the same proportions. When
+// the screen is too narrow for the names, the columns share what there is in
+// those proportions and the longest wrap: the one case where they still do.
+function sizeColumns({ pane, columns, window }, width) {
+  const fits = width >= window;
+  const root = document.documentElement.style;
+  root.setProperty("--profile-columns", columns.map((w) => `minmax(${fits ? w : 0}px, ${w}fr)`).join(" "));
+  if (pane) root.setProperty("--sessions-width", `${fits ? pane : Math.min(pane, Math.round(width / 4))}px`);
 }
 
 // --- the active profile ----------------------------------------------------
@@ -823,6 +989,7 @@ async function load({ duringAction = false } = {}) {
   applyTheme(pendingSettings ? prefs.theme : state.theme);
   renderCurrent();
   render();
+  fitWindow();
   if (selectedName) {
     const index = rows.findIndex(row => row.profile.name === selectedName);
     if (index >= 0) { selected = index; markSelected(); }
