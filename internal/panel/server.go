@@ -329,6 +329,11 @@ type State struct {
 	Blocked   string `json:"blocked"`
 	Theme     string `json:"theme"`
 
+	// Bindings travel with the state, like the theme, because the panel needs
+	// them from the first key pressed -- not only once the settings have been
+	// opened.
+	Bindings map[string][]string `json:"bindings,omitempty"`
+
 	// RenewalAtRisk is the one case where an idle refresh daemon is worth
 	// interrupting for: it is not running, and the credentials on screen are
 	// close enough to expiry that its absence is about to be felt. Saying it
@@ -370,7 +375,8 @@ func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
 	// how you know the webview reached the handler at all.
 	s.log.Info("panel opened")
 
-	state := State{Binary: s.client.Binary(), Theme: settings.Load().Theme}
+	stored := settings.Load()
+	state := State{Binary: s.client.Binary(), Theme: stored.Theme, Bindings: stored.Bindings}
 
 	status, err := s.client.Status(r.Context())
 	if err != nil {
@@ -726,6 +732,8 @@ type preferences struct {
 	SettingsPath string `json:"settingsPath"`
 	LogPath      string `json:"logPath"`
 	Binary       string `json:"binary"`
+
+	Bindings map[string][]string `json:"bindings"`
 }
 
 func (s *Server) handleReadSettings(w http.ResponseWriter, r *http.Request) {
@@ -739,11 +747,19 @@ func (s *Server) readSettings(w http.ResponseWriter, _ *http.Request) {
 	path, _ := settings.Path()
 	logPath, _ := logs.Path()
 
+	// An object even when nothing was changed, so the page can tell "read, and
+	// all defaults" from "not read yet".
+	bindings := stored.Bindings
+	if bindings == nil {
+		bindings = map[string][]string{}
+	}
+
 	out := preferences{
 		Renewal:      renewal(s.client.Daemon(context.Background())),
 		Shortcut:     stored.Shortcut,
 		Browser:      stored.Browser,
 		Theme:        stored.Theme,
+		Bindings:     bindings,
 		SettingsPath: path,
 		LogPath:      logPath,
 		Binary:       s.client.Binary(),
@@ -830,7 +846,14 @@ func (s *Server) handleWriteSettings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	previous := settings.Load()
-	stored := settings.Settings{Shortcut: body.Shortcut, Browser: body.Browser, Theme: body.Theme}
+	stored := settings.Settings{Shortcut: body.Shortcut, Browser: body.Browser, Theme: body.Theme, Bindings: body.Bindings}
+	// A save that does not mention the bindings leaves them alone. Absent and
+	// empty are different here: {} is "back to the defaults", while a page that
+	// had not read the settings yet when the theme was changed sends nothing,
+	// and must not wipe every binding the user chose on its way past.
+	if body.Bindings == nil {
+		stored.Bindings = previous.Bindings
+	}
 
 	// Applied before saving, and not saved if the system refuses it. This used
 	// to be the other way round, on the reasoning that the file should record

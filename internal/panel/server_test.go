@@ -555,6 +555,34 @@ func TestASettingTheSystemRefusesIsNotWrittenDown(t *testing.T) {
 	}
 }
 
+func TestASaveThatDoesNotMentionTheBindingsKeepsThem(t *testing.T) {
+	// The page sends the bindings only once it has read them. A theme changed
+	// before that must not take every chosen binding with it -- while an empty
+	// map, which is what restoring the defaults sends, has to clear them.
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("HOME", t.TempDir())
+	s := newTestServer(t, `echo ok`)
+
+	if status, payload := request(t, s, "POST", "/api/settings",
+		`{"browser":"default","theme":"system","bindings":{"firefox":["CmdOrCtrl+Click"]}}`); status != 200 {
+		t.Fatalf("saving bindings: %d %v", status, payload)
+	}
+	request(t, s, "POST", "/api/settings", `{"browser":"default","theme":"dark"}`)
+	if got := settings.Load(); got.Theme != "dark" || len(got.Bindings["firefox"]) != 1 {
+		t.Fatalf("after a save without bindings the file says %+v", got)
+	}
+
+	_, payload := request(t, s, "GET", "/api/state", "")
+	if bindings, _ := payload["bindings"].(map[string]any); bindings["firefox"] == nil {
+		t.Errorf("the state does not carry the bindings: %v", payload["bindings"])
+	}
+
+	request(t, s, "POST", "/api/settings", `{"browser":"default","theme":"dark","bindings":{}}`)
+	if got := settings.Load().Bindings; got != nil {
+		t.Errorf("restoring the defaults left %v", got)
+	}
+}
+
 // github stands in for the releases endpoint.
 func github(t *testing.T, body string) string {
 	t.Helper()

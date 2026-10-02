@@ -58,13 +58,32 @@ interface: edit, reload, and use the browser's developer tools.
 |---|---|
 | Type | filter, by any part of a name, session, region or account — terms may be in any order |
 | ↑ ↓ | move through the results |
-| ↵ | switch to the selected profile |
+| ↵ or click | switch to the selected profile, or the one clicked |
 | ⌘↵ | open its console **without switching to it** |
-| ⌘⇧↵ or ⌘F | the same, in a Firefox container |
+| ⌘-click or ⌘F | the same, in a Firefox container — the clicked profile, or the selected one |
 | ⌘C / ⌘⇧C | copy the account id / the profile name |
 | ⌘T | open a terminal on that profile |
 | ⌘K | clear the active profile |
 | Esc (in search) | clear the search, then the session filter, then close the panel |
+
+Those are the defaults. Every one of them can be changed, removed or given more
+bindings under **Settings → Keys and clicks**: press **+** beside an action and
+then a combination, or click **+** again while holding ⌘, ⌥ or ⇧ to bind a
+click. A key acts on the selected profile and a click on the profile clicked.
+A combination already in use is moved to the new action, and the note under the
+list says where it came from. **Restore defaults** puts them all back.
+
+A few things stay fixed. A plain click always switches to the profile clicked:
+it is how a row is chosen, and when it could be moved, a second click on **+**
+(the obvious way to stop recording) quietly turned every click on a profile into
+something else. Esc, Tab and the arrows are how the panel is moved through and
+got out of. A key that would type into the search field needs ⌘, ⌃ or ⌥, so
+that no letter becomes impossible to search for. A modified click that is not
+bound to anything does nothing, rather than switching accounts.
+
+Only the actions you change are written to the settings file, under
+`bindings`. The rest follow the defaults, including any that improve in a later
+version. A binding in the file that breaks the rules above is ignored.
 
 The compact **All sessions** menu beside search limits the list to one SSO
 session, including recent profiles. Search further narrows that session's
@@ -85,9 +104,9 @@ row under the pointer. **Right clicking the profile at the top** offers them for
 that one, plus clearing it. The profile name goes to `awsm clear --if-profile`;
 awsm checks it under the credentials lock before clearing anything.
 
-Only ↵ on its own makes a profile active. Opening a console for an account is
-not the same as starting to work in it, and every other action leaves the
-active profile alone.
+Only Switch (↵ or a plain click, by default) makes a profile active. Opening a
+console for an account is not the same as starting to work in it, and every
+other action leaves the active profile alone.
 
 An earlier version put these actions in a bar along the bottom, acting on the
 selected row. It could not work: the selection follows the pointer, so reaching
@@ -136,8 +155,8 @@ on the 15-second countdown timer. This also picks up logins from a terminal.
 **Settings** is in the footer: a system-wide shortcut that opens the panel from
 anywhere, the theme, which browser the **Console** action opens in, whether
 credentials are being renewed in the background, whether awsm starts at login,
-and a check for a newer release. It also shows where awsm, the settings file and
-the log live.
+a check for a newer release, and the keys and clicks for every action in the
+panel. It also shows where awsm, the settings file and the log live.
 
 The version check only looks. It asks GitHub for the latest release, compares it
 with the version this build was packaged from, and offers to open that release's
@@ -392,8 +411,8 @@ checks pass. Only version tags publish a release.
 
 `make test` needs Node.js 22+ for the dependency-free tests in `tests/`, and Go.
 The JavaScript tests execute the shipped script with controlled HTTP completion
-order, exercising stale responses, identity, cancellation, keyboard controls and
-queued settings. They do not replace visual checks in the webview.
+order, exercising stale responses, identity, cancellation, keyboard controls,
+custom key and click bindings and queued settings. They do not replace visual checks in the webview.
 
 The CLI contract tests run when `awsm` is available. To test the two working
 copies together without installing either binary:
