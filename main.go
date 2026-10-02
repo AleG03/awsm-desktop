@@ -41,12 +41,20 @@ var assets embed.FS
 var version string
 
 const (
-	// Wide enough for nine names out of ten on a single line. Measured against
-	// the 304 profiles this was built for: 400 points wraps 80 of them, 440
-	// wraps 31, and past that the curve flattens while the panel keeps growing.
-	// The rest wrap rather than being cut short, because the name is the only
-	// thing that tells two profiles apart.
-	panelWidth  = 440
+	// listWidth is wide enough for nine names out of ten on a single line.
+	// Measured against the 304 profiles this was built for: 400 points wraps
+	// 80 of them, 440 wraps 31, and past that the curve flattens while the
+	// panel keeps growing. The rest wrap rather than being cut short, because
+	// the name is the only thing that tells two profiles apart.
+	listWidth = 440
+
+	// sessionsWidth is the SSO session pane beside the list, and has to match
+	// --sessions-width in assets/panel.css. The window is wider by that much
+	// rather than the list narrower: taking it out of the list would undo the
+	// measurement above.
+	sessionsWidth = 180
+
+	panelWidth  = listWidth + sessionsWidth
 	panelHeight = 540
 
 	// sessionChanged is emitted to the page when the active session changes

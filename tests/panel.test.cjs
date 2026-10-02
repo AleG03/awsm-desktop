@@ -162,9 +162,11 @@ const sessionState = {
   ],
 };
 const rowNames = h => Array.from(h.run('rows.map(row => row.profile.name)'));
+const sessionButton = (h, session) => h.run(`sessionButtons.find(b => b.session === ${JSON.stringify(session)})`).element;
+const sessionNames = h => Array.from(h.run('sessionButtons.map(b => b.session)'));
+const chosenSession = h => h.run('selectedSession');
 function chooseSession(h, session) {
-  const select = h.elements.get('sessionFilter');
-  select.value = session; select.events.change();
+  sessionButton(h, session).events.click();
 }
 function search(h, text) {
   h.elements.get('search').value = text; h.elements.get('search').events.input();
@@ -194,22 +196,22 @@ test('session filter uses exact equality, combines all search terms and leaves a
   assert.equal(rowNames(h).includes('static'),true);
 });
 
-test('options come from all profiles, stay unique and sorted, and hide only when redundant', async()=>{
+test('sessions come from all profiles, stay unique and sorted, and hide only when redundant', async()=>{
   const h=await panel(sessionState);
-  const select=h.elements.get('sessionFilter');
+  const pane=h.elements.get('sessions');
   const expected=[...new Set(sessionState.profiles.map(p=>p.sso_session).filter(Boolean))].sort((a,b)=>a.localeCompare(b));
-  assert.deepEqual(select.children.map(option=>option.value),['',...expected]);
-  assert.deepEqual(select.children.map(option=>option.textContent),['All sessions',...expected]);
+  assert.deepEqual(sessionNames(h),['',...expected]);
+  assert.deepEqual(pane.children.map(button=>button.children[0].textContent),['All sessions',...expected]);
   search(h,'no results');
-  assert.equal(select.children.length,4);
-  assert.equal(select.hidden,false);
+  assert.equal(pane.children.length,4);
+  assert.equal(pane.hidden,false);
   for (const [profiles,hidden] of [
     [[],true],[[{name:'static'}],true],
     [[{name:'one',sso_session:'only'},{name:'two',sso_session:'only'}],true],
     [[{name:'one',sso_session:'only'},{name:'static'}],false],
   ]) {
     const refreshed=h.run('load()'); h.take('/api/state').resolve({profiles}); await refreshed;
-    assert.equal(select.hidden,hidden);
+    assert.equal(pane.hidden,hidden);
   }
 });
 
@@ -233,11 +235,11 @@ test('empty filtered results clear accessible selection and Escape clears query,
   assert.equal(h.elements.get('search').attributes['aria-activedescendant'],undefined);
   key(h,'Escape');
   assert.equal(h.elements.get('search').value,'');
-  assert.equal(h.elements.get('sessionFilter').value,'team');
+  assert.equal(chosenSession(h),'team');
   assert.deepEqual(rowNames(h),['dev-admin','dev-reader']);
   assert.equal(h.requests.length,0);
   key(h,'Escape');
-  assert.equal(h.elements.get('sessionFilter').value,'');
+  assert.equal(chosenSession(h),'');
   assert.equal(h.run('selected'),0);
   assert.equal(rowNames(h).length,5);
   assert.equal(h.requests.length,0);
@@ -245,16 +247,39 @@ test('empty filtered results clear accessible selection and Escape clears query,
   h.take('/api/hide').resolve({});
 });
 
-test('session menu owns native navigation, Escape and profile shortcuts', async()=>{
+test('in the session pane the arrows move between sessions, return is the button\'s, and profile shortcuts do nothing', async()=>{
   const h=await panel(sessionState);
   chooseSession(h,'team');
-  for (const pressed of ['ArrowDown','ArrowUp','Enter','Escape','f','c','t','k']) {
-    h.documentEvents.keydown({key:pressed,target:h.elements.get('sessionFilter'),metaKey:true,
-      preventDefault(){assert.fail('intercepted session menu');}});
+  const sessions=sessionNames(h), at=sessions.indexOf('team');
+  const onSession=(pressed,extra={})=>h.documentEvents.keydown({key:pressed,target:h.run('document.activeElement'),...extra});
+  sessionButton(h,'team').focus();
+  onSession('ArrowDown',{preventDefault(){}});
+  assert.equal(chosenSession(h),sessions[at+1]);
+  assert.equal(h.run('document.activeElement === sessionButtons[' + (at+1) + '].element'),true);
+  onSession('ArrowUp',{preventDefault(){}}); onSession('ArrowUp',{preventDefault(){}});
+  assert.equal(chosenSession(h),sessions[at-1]);
+  for (const pressed of ['Enter',' ','f','c','t','k']) {
+    onSession(pressed,{metaKey:true,preventDefault(){assert.fail(`intercepted ${pressed} on a session`);}});
   }
-  assert.equal(h.run('selected'),0);
-  assert.equal(h.elements.get('sessionFilter').value,'team');
   assert.equal(h.requests.length,0);
+  onSession('d',{preventDefault(){assert.fail('typing was swallowed');}});
+  assert.equal(h.run('document.activeElement === ui.search'),true);
+});
+
+test('only the chosen session is in the tab order, and counts follow the search', async()=>{
+  const h=await panel(sessionState);
+  const tabbable=()=>h.run('sessionButtons.filter(b => b.element.tabIndex === 0).map(b => b.session)');
+  assert.deepEqual(Array.from(tabbable()),['']);
+  chooseSession(h,'team');
+  assert.deepEqual(Array.from(tabbable()),['team']);
+  assert.equal(sessionButton(h,'team').attributes['aria-pressed'],'true');
+  assert.equal(sessionButton(h,'').attributes['aria-pressed'],'false');
+  const count=session=>sessionButton(h,session).children[1].textContent;
+  assert.deepEqual([count(''),count('team'),count('Team')],['5','2','1']);
+  search(h,'reader');
+  assert.deepEqual([count(''),count('team'),count('Team')],['1','1','0']);
+  assert.equal(sessionButton(h,'Team').classes.has('none'),true);
+  assert.equal(sessionButton(h,'team').classes.has('none'),false);
 });
 
 test('filter survives hiding and reopening but a fresh app resets without persisting it', async()=>{
@@ -262,11 +287,11 @@ test('filter survives hiding and reopening but a fresh app resets without persis
   chooseSession(h,'team');
   h.run('dismiss()'); h.take('/api/hide').resolve({});
   h.windowEvents.focus(); h.take('/api/state').resolve(sessionState); await tick();
-  assert.equal(h.elements.get('sessionFilter').value,'team');
+  assert.equal(chosenSession(h),'team');
   assert.deepEqual(rowNames(h),['dev-admin','dev-reader']);
   assert.equal(storage.size,0);
   const restarted=await panel(sessionState,storage);
-  assert.equal(restarted.elements.get('sessionFilter').value,'');
+  assert.equal(chosenSession(restarted),'');
   assert.equal(rowNames(restarted).length,5);
 });
 
@@ -274,31 +299,35 @@ test('only a successful current refresh updates options and resets a removed ses
   const h=await panel(sessionState); chooseSession(h,'team'); search(h,'dev');
   const failed=h.run('load()'); h.take('/api/state').reject(new Error('offline'));
   await assert.rejects(failed,/offline/);
-  assert.equal(h.elements.get('sessionFilter').value,'team');
+  assert.equal(chosenSession(h),'team');
   const old=h.run('load()'); const stale=h.take('/api/state');
   const fresh=h.run('load()'); h.take('/api/state').resolve(sessionState); await fresh;
   stale.resolve({profiles:[]}); await old;
-  assert.equal(h.elements.get('sessionFilter').value,'team');
+  assert.equal(chosenSession(h),'team');
   const removed=h.run('load()');
   h.take('/api/state').resolve({profiles:[{name:'dev-new',sso_session:'new'}, {name:'static'}]}); await removed;
-  assert.equal(h.elements.get('sessionFilter').value,'');
-  assert.deepEqual(h.elements.get('sessionFilter').children.map(option=>option.value),['','new']);
+  assert.equal(chosenSession(h),'');
+  assert.deepEqual(sessionNames(h),['','new']);
   assert.equal(h.elements.get('search').value,'dev');
   assert.deepEqual(rowNames(h),['dev-new']);
 });
 
-test('session menu stays disabled through action refresh and recovers after failure or cancellation', async()=>{
+test('session pane stays disabled through action refresh and recovers after failure or cancellation', async()=>{
+  const disabled=h=>Array.from(h.run('sessionButtons.map(b => b.element.disabled)'));
   for (const result of [{error:'login failed'},{cancelled:true}]) {
     const h=await panel(sessionState); chooseSession(h,'team');
     h.run('activate({name:"dev-admin"})'); const request=h.take('/api/profile/set');
-    assert.equal(h.elements.get('sessionFilter').disabled,true);
+    assert.equal(disabled(h).every(Boolean),true);
     chooseSession(h,'team-prod');
+    sessionButton(h,'team').focus();
+    h.documentEvents.keydown({key:'ArrowDown',target:sessionButton(h,'team'),preventDefault(){}});
+    assert.equal(chosenSession(h),'team');
     assert.deepEqual(rowNames(h),['dev-admin','dev-reader']);
     request.resolve(result); await tick();
-    assert.equal(h.elements.get('sessionFilter').disabled,true);
+    assert.equal(disabled(h).every(Boolean),true);
     h.take('/api/state').resolve(sessionState); await tick();
-    assert.equal(h.elements.get('sessionFilter').disabled,false);
-    assert.equal(h.elements.get('sessionFilter').value,'team');
+    assert.equal(disabled(h).some(Boolean),false);
+    assert.equal(chosenSession(h),'team');
   }
 });
 

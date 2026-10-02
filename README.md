@@ -85,19 +85,27 @@ Only the actions you change are written to the settings file, under
 `bindings`. The rest follow the defaults, including any that improve in a later
 version. A binding in the file that breaks the rules above is ignored.
 
-The compact **All sessions** menu beside search limits the list to one SSO
-session, including recent profiles. Search further narrows that session's
-results. The menu lists full session names alphabetically and appears only
-when it can narrow the list. Profiles without an SSO session appear under
-**All sessions**.
+The **session pane** on the left limits the list to one SSO session, including
+recent profiles. Search further narrows that session's results. The pane lists
+the sessions alphabetically under **All sessions**, each with how many of its
+profiles match the current search, so you can see where a search found things
+before going there; a session with no matches is dimmed. Long names are cut
+short, with the whole name in the tooltip. The pane appears only when it can
+narrow the list. Profiles without an SSO session appear under **All sessions**.
 
-Changing the filter keeps your search text, selects the first result and returns
+The pane does not come out of the list's width: the window is wider by the
+pane's width instead, so long profile names still fit on one line.
+
+Clicking a session keeps your search text, selects the first result and returns
 focus to search. It leaves credentials and the active profile unchanged; the
 active profile remains visible in the header even outside the filter. The choice
 survives hiding and reopening the panel, resets to **All sessions** when the app
 restarts, and resets if that session disappears after a successful refresh.
-The menu keeps its native keyboard controls and is disabled while an operation
-is running.
+
+From the keyboard, Tab from search reaches the chosen session, ↑ ↓ move between
+sessions and filter as they go, and typing goes back to search. Esc clears the
+search, then the session, then closes the panel, wherever the focus is. The pane
+is disabled while an operation is running.
 
 **Right clicking a profile** offers the same actions as a native menu, on the
 row under the pointer. **Right clicking the profile at the top** offers them for

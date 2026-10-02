@@ -28,7 +28,7 @@ const ui = {
   clearButton: el("clearButton"),
 
   search: el("search"),
-  sessionFilter: el("sessionFilter"),
+  sessions: el("sessions"),
   list: el("list"),
   hint: el("hint"),
   settingsButton: el("settingsButton"),
@@ -63,6 +63,8 @@ let rows = [];
 let selected = 0;
 // Kept only for this app process, including when the panel is hidden.
 let selectedSession = "";
+// One entry per button in the session pane, "All sessions" first as "".
+let sessionButtons = [];
 let recording = false;
 // The action a binding is being recorded for, if one is.
 let recordingAction = null;
@@ -168,6 +170,11 @@ function visibleProfiles() {
     (!selectedSession || p.sso_session === selectedSession) && matches(p, terms));
 }
 
+// updateSessionOptions rebuilds the session pane from the profiles.
+//
+// Only when the profiles change. Everything that changes more often than that
+// -- the choice, the counts, being disabled -- is marked on the buttons that are
+// already there, so arrowing through the pane does not lose its place.
 function updateSessionOptions() {
   const sessions = [...new Set(state.profiles.map(p => p.sso_session).filter(Boolean))]
     .sort((a, b) => a.localeCompare(b));
@@ -175,27 +182,81 @@ function updateSessionOptions() {
     selectedSession = "";
     selected = 0;
   }
-  ui.sessionFilter.replaceChildren(new Option("All sessions", ""),
-    ...sessions.map(session => new Option(session, session)));
-  ui.sessionFilter.value = selectedSession;
-  ui.sessionFilter.title = selectedSession || "All sessions";
-  ui.sessionFilter.hidden = sessions.length === 0 ||
+  const focused = document.activeElement?.dataset?.session;
+  sessionButtons = ["", ...sessions].map(sessionButton);
+  ui.sessions.replaceChildren(...sessionButtons.map(b => b.element));
+  // A pane that cannot narrow the list is only something to look past.
+  ui.sessions.hidden = sessions.length === 0 ||
     (sessions.length === 1 && state.profiles.every(p => p.sso_session === sessions[0]));
+  markSessions();
+  if (focused !== undefined) sessionButtons.find(b => b.session === focused)?.element.focus();
 }
 
-function changeSession(session) {
+function sessionButton(session) {
+  const element = document.createElement("button");
+  element.type = "button";
+  element.className = "session";
+  element.dataset.session = session;
+  element.title = session || "All sessions";
+  element.setAttribute("aria-controls", "list");
+  const name = document.createElement("span");
+  name.className = "session-name";
+  name.textContent = session || "All sessions";
+  const count = document.createElement("span");
+  count.className = "session-count";
+  element.append(name, count);
+  element.addEventListener("click", () => {
+    if (!activeAction) changeSession(session);
+  });
+  return { session, element, count };
+}
+
+// markSessions shows which session is chosen and how many profiles in each
+// match the search, so you can see where a search found things before going
+// there. Only the chosen one is in the tab order; the arrows move between them.
+function markSessions() {
+  const counts = new Map();
+  let all = 0;
+  const terms = searchTerms();
+  for (const profile of state.profiles) {
+    if (!matches(profile, terms)) continue;
+    all++;
+    if (profile.sso_session) counts.set(profile.sso_session, (counts.get(profile.sso_session) || 0) + 1);
+  }
+  for (const { session, element, count } of sessionButtons) {
+    const found = session ? counts.get(session) || 0 : all;
+    const chosen = session === selectedSession;
+    count.textContent = String(found);
+    element.classList.toggle("chosen", chosen);
+    element.classList.toggle("none", found === 0);
+    element.setAttribute("aria-pressed", String(chosen));
+    element.tabIndex = chosen ? 0 : -1;
+    element.disabled = Boolean(activeAction);
+  }
+}
+
+function changeSession(session, { focusSearch = true } = {}) {
   selectedSession = session;
-  ui.sessionFilter.value = session;
-  ui.sessionFilter.title = session || "All sessions";
   selected = 0;
   render();
-  ui.search.focus();
+  if (focusSearch) ui.search.focus();
+}
+
+// stepSession chooses the session above or below the focused one, keeping the
+// focus in the pane so the arrows can go on from there.
+function stepSession(from, delta) {
+  if (activeAction || sessionButtons.length === 0) return;
+  const index = sessionButtons.findIndex(b => b.element === from);
+  const next = sessionButtons[(index + delta + sessionButtons.length) % sessionButtons.length];
+  changeSession(next.session, { focusSearch: false });
+  next.element.focus();
 }
 
 // --- the list --------------------------------------------------------------
 
 function render() {
   const found = visibleProfiles();
+  markSessions();
 
   ui.list.replaceChildren();
   rows = [];
@@ -599,7 +660,7 @@ async function run(action, { refresh = true, doing = "", stoppable = false } = {
   activeAction = operation;
   ++stateRequest; // Responses requested before this action cannot restore old state.
   document.body.classList.add("busy");
-  ui.sessionFilter.disabled = true;
+  markSessions();
   ui.list.setAttribute("aria-busy", "true");
   renderNotice();
   const explain = doing ? setTimeout(() => {
@@ -628,7 +689,7 @@ async function run(action, { refresh = true, doing = "", stoppable = false } = {
     activeAction = null;
     reloadAfterAction = false;
     document.body.classList.remove("busy");
-    ui.sessionFilter.disabled = false;
+    markSessions();
     ui.list.setAttribute("aria-busy", "false");
     renderNotice();
     if (stopped) flash("Cancelled.");
@@ -1297,8 +1358,19 @@ document.addEventListener("keydown", (event) => {
     if (event.key !== "Tab" && !event.target.closest?.("#notice button")) event.preventDefault();
     return;
   }
-  // Including Escape: the native session menu must own all of its keys.
-  if (event.target === ui.sessionFilter) return;
+  // In the session pane the arrows move between sessions, and typing goes
+  // back to the search field. Return and space are the button's own.
+  if (sessionButtons.some(b => b.element === event.target)) {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      stepSession(event.target, event.key === "ArrowDown" ? 1 : -1);
+      return;
+    }
+    if (event.key.length === 1 && event.key !== " " && !event.metaKey && !event.ctrlKey) {
+      ui.search.focus();
+      return;
+    }
+  }
   if (event.key !== "Escape" && event.target.closest?.("button, select, input:not(#search), textarea")) return;
 
   switch (event.key) {
@@ -1355,11 +1427,6 @@ document.addEventListener("click", (event) => {
 ui.search.addEventListener("input", () => {
   selected = 0;
   render();
-});
-
-ui.sessionFilter.addEventListener("change", () => {
-  if (activeAction) return;
-  changeSession(ui.sessionFilter.value);
 });
 
 ui.current.addEventListener("click", () => {
