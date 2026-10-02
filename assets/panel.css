@@ -9,6 +9,9 @@
      what a heading actually measures: .group sets it, and .row keeps the
      selected row from scrolling underneath one. */
   --group-height: 29px;
+  /* The session pane's width. main.go widens the window by the same amount,
+     so the list keeps the width its names were measured against. */
+  --sessions-width: 180px;
 
   color-scheme: light;
 
@@ -18,6 +21,9 @@
   --rule: rgba(0, 0, 0, 0.08);
   --hover: rgba(0, 0, 0, 0.05);
   --field: rgba(0, 0, 0, 0.05);
+  /* The chosen session: plainer than the accent, which belongs to the row
+     return would act on. Two accent strips would compete for that. */
+  --chosen: rgba(0, 0, 0, 0.09);
   /* Solid, for the strips that must hide what scrolls under them, and for the
      whole panel when a theme is chosen rather than followed. */
   --sheet: #f4f4f6;
@@ -37,6 +43,7 @@
     --rule: rgba(255, 255, 255, 0.09);
     --hover: rgba(255, 255, 255, 0.07);
     --field: rgba(255, 255, 255, 0.075);
+    --chosen: rgba(255, 255, 255, 0.12);
     --sheet: #2a2a2d;
     --warn: #ffab6b;
     --good: #57d364;
@@ -52,6 +59,7 @@
   --rule: rgba(255, 255, 255, 0.09);
   --hover: rgba(255, 255, 255, 0.07);
   --field: rgba(255, 255, 255, 0.075);
+  --chosen: rgba(255, 255, 255, 0.12);
   --sheet: #2a2a2d;
   --warn: #ffab6b;
   --good: #57d364;
@@ -294,22 +302,87 @@ header {
   color: var(--faint);
 }
 
-#search:focus-visible, #sessionFilter:focus-visible {
+#search:focus-visible {
   box-shadow: 0 0 0 2px var(--accent);
 }
 
-#sessionFilter {
-  flex: 0 0 128px;
-  width: 128px;
+/* The session pane and the list side by side, each scrolling on its own. */
+.browse {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.sessions {
+  flex: none;
+  width: var(--sessions-width);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 6px 6px 8px;
+  border-right: 1px solid var(--rule);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.session {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 12px;
+  text-align: left;
+  cursor: default;
+}
+
+/* Not on the chosen one, which would otherwise look less chosen under the
+   pointer than away from it. */
+.session:not(.chosen):hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.session.chosen {
+  background: var(--chosen);
+  font-weight: 600;
+}
+
+/* Long names are cut short here, unlike profile names: the whole name is in
+   the tooltip, and the pane is for choosing, not telling accounts apart. */
+.session-name {
+  flex: 1;
   min-width: 0;
-  color: var(--text);
+  overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-count {
+  flex: none;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.session.none .session-name {
+  color: var(--faint);
+}
+
+/* Inside the pane's edge, which would otherwise clip the ring. */
+.session:focus-visible {
+  outline-offset: -2px;
 }
 
 /* --- the list ----------------------------------------------------------- */
 
 main {
   flex: 1;
+  min-width: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 0 8px 6px;
@@ -604,10 +677,10 @@ footer {
 }
 
 /* Keep progress and its cancel button fully readable while work is pending. */
-.busy .current, .busy .expanded, .busy .filters, .busy #list, .busy footer {
+.busy .current, .busy .expanded, .busy .filters, .busy .sessions, .busy #list, .busy footer {
   pointer-events: none;
 }
-.busy #list, .busy .filters { opacity: 0.6; }
+.busy #list, .busy .filters, .busy .sessions { opacity: 0.6; }
 
 button:focus-visible, select:focus-visible, input:focus-visible {
   outline: 2px solid var(--accent);

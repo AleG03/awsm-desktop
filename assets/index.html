@@ -55,12 +55,15 @@
           autocorrect="off"
           spellcheck="false"
         />
-        <select id="sessionFilter" aria-label="Filter by SSO session" aria-controls="list" hidden>
-          <option value="">All sessions</option>
-        </select>
       </div>
 
-      <main id="list" role="listbox" aria-label="AWS profiles"></main>
+      <!-- The session pane sits beside the list rather than in a menu beside
+           search: every session and how many profiles match in each is on
+           screen at once, and changing it is one click instead of two. -->
+      <div class="browse">
+        <nav class="sessions" id="sessions" aria-label="SSO sessions" hidden></nav>
+        <main id="list" role="listbox" aria-label="AWS profiles"></main>
+      </div>
 
       <footer>
         <!-- Actions are on the right click menu and on the keys listed here.
