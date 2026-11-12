@@ -300,18 +300,12 @@ each other — so nothing is left to hue alone.
 ### Switching can take a while, and says so
 
 Switching to a profile whose SSO session has lapsed makes awsm open a browser
-and wait for the sign-in. That is the right thing for it to do and it can take
-as long as a person takes. Three things follow from that, and all three were
-wrong at some point:
+and wait for sign-in. The panel hides when the browser takes focus, and the
+switch keeps running. A sign-in or console opened directly from the panel
+dismisses it before running awsm.
 
-**The panel stays on screen.** It normally hides the moment it loses focus,
-which is what a popover should do — except that the browser awsm just opened
-takes the focus, so the panel vanished exactly when it had something to say.
-While an action is waiting on you, the hide is suspended.
-
-**The menu bar says so too.** You may well be looking at the browser rather than
-at the panel, so `Switching…` or `Signing in…` appears beside the icon until it
-is over. This is the one message that outranks the rule about staying quiet.
+`Switching…` or `Signing in…` appears beside the icon until the operation
+finishes. Click the icon to return to the panel and see its progress.
 
 **Nothing else can interrupt it.** Only the operations that write credentials —
 switching, signing in — are mutually exclusive, and a new one replaces the old
@@ -364,9 +358,8 @@ places. It costs nothing on a machine that does not need it.
 
 **Type your MFA code.** awsm reads the code from standard input, and a panel has
 none to offer. Profiles that need one are marked `MFA`, and choosing one opens
-your default terminal with the command already written. Everything else — SSO
-included — happens without leaving the panel, because `awsm sso login` opens the
-browser by itself.
+your default terminal with the command already written. SSO sign-in opens in
+your browser.
 
 **Renew credentials on a schedule.** That is awsm's own refresh daemon
 (`awsm daemon enable`). Two writers on `~/.aws/credentials` would be a bug

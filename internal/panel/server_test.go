@@ -351,10 +351,6 @@ esac
 }
 
 func TestOpeningAConsoleDoesNotHoldThePanelOpen(t *testing.T) {
-	// Console deliberately dismisses the panel: the point is to send the user
-	// to a browser and get out of the way. Announcing it as activity would
-	// suppress that hide and then leave the status bar talking about a console
-	// that opened long ago.
 	s := newTestServer(t, `echo ok`)
 
 	var announced []string
@@ -364,7 +360,36 @@ func TestOpeningAConsoleDoesNotHoldThePanelOpen(t *testing.T) {
 		t.Fatalf("Console: %v", err)
 	}
 	if len(announced) != 0 {
-		t.Errorf("Console announced %v; it must not hold the panel open", announced)
+		t.Errorf("Console announced %v; only credential operations announce activity", announced)
+	}
+}
+
+func TestBrowserActionsHideBeforeStartingTheCLI(t *testing.T) {
+	for _, tc := range []struct {
+		name, path, body string
+	}{
+		{"console", "/api/console", `{"profile":"work","browser":"default"}`},
+		{"sign-in", "/api/sso/login", `{"session":"corp"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("PANEL_TEST_HIDE_MARKER", filepath.Join(dir, "hidden"))
+			s := newTestServer(t, `
+if [ ! -f "$PANEL_TEST_HIDE_MARKER" ]; then
+  echo 'CLI started before the panel was hidden' >&2
+  exit 1
+fi
+`)
+			s.OnHide(func() {
+				if err := os.WriteFile(filepath.Join(dir, "hidden"), nil, 0600); err != nil {
+					t.Error(err)
+				}
+			})
+
+			if code, body := request(t, s, "POST", tc.path, tc.body); code != http.StatusOK || body["ok"] != true {
+				t.Fatalf("status %d: %+v", code, body)
+			}
+		})
 	}
 }
 

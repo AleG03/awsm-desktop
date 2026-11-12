@@ -72,6 +72,7 @@ let recordingAction = null;
 let customBindings = {};
 let stateRequest = 0;
 let activeAction = null;
+let actionError = "";
 let reloadAfterAction = false;
 let identityRequest = 0;
 let settingsQueue = Promise.resolve();
@@ -105,8 +106,7 @@ async function send(path, options) {
   return data;
 }
 
-// dismiss closes the panel. Anything that sends the user to a browser or a
-// terminal should get out of the way of where they were sent.
+// dismiss hides the panel when the user presses Escape.
 const dismiss = () => post("/api/hide").catch(() => {});
 
 // --- theme -----------------------------------------------------------------
@@ -648,10 +648,11 @@ function renderNotice() {
   }
   ui.notice.replaceChildren();
 
-  if (state.error) {
+  const error = actionError || state.error;
+  if (error) {
     ui.notice.hidden = false;
     ui.notice.className = "notice error";
-    ui.notice.append(noticeText(state.error));
+    ui.notice.append(noticeText(error));
     return;
   }
   if (!state.blocked) {
@@ -677,8 +678,7 @@ function renderNotice() {
   ui.notice.className = "notice";
 
   if (state.blocked === "sso") {
-    // An expired SSO session needs a browser, which awsm opens by itself, so
-    // nothing here has to leave the panel.
+    // awsm opens the browser for an expired SSO session.
     ui.notice.append(noticeText(`The SSO session for ${state.profile} has expired.`));
     const name = state.profiles.find((p) => p.name === state.profile)?.sso_session;
     if (name) {
@@ -824,6 +824,7 @@ async function run(action, { refresh = true, doing = "", stoppable = false } = {
   if (activeAction) return;
   const operation = { id: operationID(), doing, stoppable, slow: false, cancelling: false };
   activeAction = operation;
+  actionError = "";
   ++stateRequest; // Responses requested before this action cannot restore old state.
   document.body.classList.add("busy");
   markSessions();
@@ -850,7 +851,9 @@ async function run(action, { refresh = true, doing = "", stoppable = false } = {
         } while (reloadAfterAction);
       } catch (error) { failure ||= String(error.message || error); }
     }
-    if (failure) state.error = failure;
+    // The panel can be hidden when the command fails. Keep its result across
+    // the state refresh that runs when the panel is shown again.
+    actionError = failure;
     clearTimeout(explain);
     activeAction = null;
     reloadAfterAction = false;
@@ -931,10 +934,7 @@ function activate(profile) {
 
 function toTerminal(name) {
   run(
-    async () => {
-      await post("/api/terminal", { profile: name });
-      dismiss();
-    },
+    () => post("/api/terminal", { profile: name }),
     { refresh: false, doing: `Opening a terminal for ${name}` },
   );
 }
@@ -942,16 +942,14 @@ function toTerminal(name) {
 function openConsole(profile, browser) {
   if (!profile) return;
   run(
-    async (operationId) => {
+    (operationId) => {
       // An empty browser means "whatever the settings say", which keeps the
       // preference in one place instead of two.
-      const result = await post("/api/console", {
+      return post("/api/console", {
         profile: profile.name,
         browser: browser ?? "",
         operationId,
       });
-      if (!result.cancelled) dismiss();
-      return result;
     },
     { refresh: false, doing: `Opening the console for ${profile.name}`, stoppable: true },
   );

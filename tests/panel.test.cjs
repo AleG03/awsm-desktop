@@ -112,6 +112,14 @@ test('focus preserves progress and Cancel, which targets only this console opera
   assert.match(h.elements.get('notice').textContent,/Cancelled/);
 });
 
+test('reopening the panel preserves an error from a browser action', async()=>{
+  const h=await panel(); h.run('openConsole({name:"B"})');
+  h.take('/api/console').resolve({error:'could not open the browser'}); await tick();
+  h.windowEvents.focus();
+  h.take('/api/state').resolve({profile:'A',profiles:[]}); await tick();
+  assert.match(h.elements.get('notice').textContent,/could not open the browser/);
+});
+
 test('an action invalidates pending state requests and rejects a second action', async()=>{
   const h=await panel(); const old=h.run('load()'); const stale=h.take('/api/state');
   h.run('activate({name:"B"}); activate({name:"A"})'); assert.equal(h.requests.length,1);

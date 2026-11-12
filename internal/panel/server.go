@@ -46,8 +46,7 @@ type Server struct {
 	applySettings func(settings.Settings) error
 	copyText      func(string) bool
 
-	// busy reports that a long operation started or ended, so the status bar
-	// can say so and the panel can refuse to hide while it runs.
+	// busy reports that a long operation started or ended to the status bar.
 	busy func(doing string)
 
 	// resize sets the panel's width and answers with the width it got, which
@@ -95,6 +94,12 @@ func New(client *awsm.Client, assets fs.FS, log *slog.Logger, quit func()) *Serv
 // else -- a browser, a terminal -- should not leave the panel floating on top
 // of where they were sent.
 func (s *Server) OnHide(hide func()) { s.hide = hide }
+
+func (s *Server) dismissPanel() {
+	if s.hide != nil {
+		s.hide()
+	}
+}
 
 // OnUpdates wires the version this build reports and the way to open a page.
 func (s *Server) OnUpdates(version string, openURL func(string) error) {
@@ -454,8 +459,7 @@ func (s *Server) switchProfile(name, id string) error {
 // away.
 func (s *Server) Console(name, browser string) error { return s.console(name, browser, "") }
 
-// Console operations have their own cancellation IDs. They never replace a
-// profile switch or hold the native window open after it loses focus.
+// Console operations have their own cancellation IDs, independent of switches.
 func (s *Server) console(name, browser, id string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -476,6 +480,7 @@ func (s *Server) console(name, browser, id string) error {
 	if browser == "" {
 		browser = settings.Load().Browser
 	}
+	s.dismissPanel()
 	return cancelled(ctx, s.client.Console(ctx, name, awsm.Browser(browser)))
 }
 
@@ -502,7 +507,11 @@ func (s *Server) CancelOperation(id string) bool {
 // Not tracked as a long operation: it launches the terminal and returns. The
 // waiting happens in there, where the user can see it.
 func (s *Server) Terminal(name string) error {
-	return terminal.Open(s.client.Binary(), "profile", "set", name)
+	if err := terminal.Open(s.client.Binary(), "profile", "set", name); err != nil {
+		return err
+	}
+	s.dismissPanel()
+	return nil
 }
 
 // ClearIfActive lets go of the active profile, if it is still the one asked
@@ -647,11 +656,10 @@ func (s *Server) handleSSOLogin(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &body) {
 		return
 	}
-	// awsm opens the browser itself and waits for the flow, so this needs no
-	// terminal and can be an ordinary button -- and for the same reason it
-	// holds the panel open and is cancellable.
+	// Give way to the browser while awsm waits for sign-in to finish.
 	ctx, done := s.startLong("Signing in…", body.OperationID)
 	defer done()
+	s.dismissPanel()
 
 	if err := s.client.SSOLogin(ctx, body.Session); err != nil {
 		s.report(w, cancelled(ctx, err))
@@ -845,6 +853,7 @@ func (s *Server) handleOpenRelease(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, fmt.Errorf("could not open the release page: %w", err))
 		return
 	}
+	s.dismissPanel()
 	writeJSON(w, http.StatusOK, map[string]string{"opened": url})
 }
 
@@ -928,9 +937,7 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleHide(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-	if s.hide != nil {
-		s.hide()
-	}
+	s.dismissPanel()
 }
 
 // maxPanelWidth bounds what the page may ask for. The screen is the real limit,

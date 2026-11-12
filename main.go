@@ -122,10 +122,7 @@ func main() {
 	// asking to see it, and toggling would close the panel they just opened.
 	showPanel := func() {}
 
-	// activity is what a long operation is doing, or nil when nothing is.
-	//
-	// Two things read it: the status bar, which says so, and the handler below
-	// that would otherwise dismiss the panel at the worst possible moment.
+	// activity is what the status bar reports while a long operation runs.
 	var activity atomic.Pointer[string]
 
 	var app *application.App
@@ -185,18 +182,9 @@ func main() {
 		},
 	})
 
-	// A popover that stays open when you click elsewhere feels broken, and the
-	// system tray does not do this for us.
-	//
-	// The exception is the reason this is not a one-liner. Switching onto a
-	// lapsed SSO session makes awsm open a browser; the browser takes the
-	// focus; this fires; and the panel disappears taking with it the message
-	// explaining what just happened and the button to stop it. So while an
-	// operation is waiting on the user, the panel stays.
+	// A profile switch can open a browser when awsm needs an SSO sign-in.
+	// Hide on focus loss so the panel gives way while the switch continues.
 	window.OnWindowEvent(events.Common.WindowLostFocus, func(*application.WindowEvent) {
-		if activity.Load() != nil {
-			return
-		}
 		window.Hide()
 	})
 
@@ -237,8 +225,8 @@ func main() {
 	})
 
 	tray.SetMenu(buildMenu(app))
-	buildRowMenu(app, server, window, log)
-	buildActiveMenu(app, server, window, log)
+	buildRowMenu(app, server, log)
+	buildActiveMenu(app, server, log)
 
 	// The shortcut is whatever the settings say, re-registered whenever they
 	// change. Nothing is claimed by default: taking a key combination from
@@ -361,7 +349,7 @@ func menuItem(app *application.App, menu *application.ContextMenu, log *slog.Log
 // between, and the only reliable way to act on a profile was to activate it
 // first. A context menu carries the row it was opened on, so it cannot target
 // the wrong one.
-func buildRowMenu(app *application.App, server *panel.Server, window *application.WebviewWindow, log *slog.Logger) {
+func buildRowMenu(app *application.App, server *panel.Server, log *slog.Logger) {
 	menu := app.ContextMenu.New()
 	item := func(label string, do func(context.Context, string) error) {
 		menuItem(app, menu, log, label, do)
@@ -376,7 +364,7 @@ func buildRowMenu(app *application.App, server *panel.Server, window *applicatio
 	})
 
 	menu.AddSeparator()
-	addLookingActions(item, server, window)
+	addLookingActions(item, server)
 	menu.AddSeparator()
 	addCopyActions(item, server)
 
@@ -387,13 +375,13 @@ func buildRowMenu(app *application.App, server *panel.Server, window *applicatio
 //
 // The same actions minus the one that makes no sense -- it is already the
 // active profile -- plus the one that only makes sense here: letting go of it.
-func buildActiveMenu(app *application.App, server *panel.Server, window *application.WebviewWindow, log *slog.Logger) {
+func buildActiveMenu(app *application.App, server *panel.Server, log *slog.Logger) {
 	menu := app.ContextMenu.New()
 	item := func(label string, do func(context.Context, string) error) {
 		menuItem(app, menu, log, label, do)
 	}
 
-	addLookingActions(item, server, window)
+	addLookingActions(item, server)
 	menu.AddSeparator()
 	addCopyActions(item, server)
 	menu.AddSeparator()
@@ -414,13 +402,11 @@ type addItem func(label string, do func(context.Context, string) error)
 //
 // Not activating the profile is the point: looking at an account is not the
 // same as starting to work in it.
-func addLookingActions(item addItem, server *panel.Server, window *application.WebviewWindow) {
+func addLookingActions(item addItem, server *panel.Server) {
 	item("Open Console", func(_ context.Context, name string) error {
-		window.Hide()
 		return server.Console(name, "")
 	})
 	item("Open in Firefox Container", func(_ context.Context, name string) error {
-		window.Hide()
 		return server.Console(name, "firefox")
 	})
 }
