@@ -38,13 +38,22 @@ func TestFileChangesWakeTheUIWithoutWaitingForTheStatusTimer(t *testing.T) {
 			t.Fatal("watcher stopped")
 		}
 	}
-	// Sending two ticks guarantees the first has been processed, including the
-	// initial snapshot. The second may be scanning when the file changes.
-	tick()
-	tick()
-	if err := os.WriteFile(path, []byte("fake"), 0600); err != nil {
-		t.Fatal(err)
+	// Publish the completed file in one step. An in-flight scan could
+	// otherwise observe the file between its creation and the write.
+	publishCredentials := func() {
+		t.Helper()
+		staged := path + ".new"
+		if err := os.WriteFile(staged, []byte("fake"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(staged, path); err != nil {
+			t.Fatal(err)
+		}
 	}
+	// Sending two ticks guarantees that the first scan has finished.
+	tick()
+	tick()
+	publishCredentials()
 	tick()
 	tick()
 	select {
@@ -59,13 +68,7 @@ func TestFileChangesWakeTheUIWithoutWaitingForTheStatusTimer(t *testing.T) {
 		t.Fatal("unchanged file triggered another refresh")
 	default:
 	}
-	replacement := path + ".new"
-	if err := os.WriteFile(replacement, []byte("fake"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Rename(replacement, path); err != nil {
-		t.Fatal(err)
-	}
+	publishCredentials()
 	tick()
 	tick()
 	select {
